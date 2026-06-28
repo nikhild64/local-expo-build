@@ -1,4 +1,4 @@
-# Contributing to expo-local-build
+# Contributing to local-expo-build
 
 Thanks for your interest! This is a small focused CLI — happy to take PRs that
 keep it that way.
@@ -6,8 +6,8 @@ keep it that way.
 ## Dev setup
 
 ```bash
-git clone https://github.com/nikhild64/expo-local-build.git
-cd expo-local-build
+git clone https://github.com/nikhild64/local-expo-build.git
+cd local-expo-build
 npm install
 npm run dev      # tsc --watch into dist/
 ```
@@ -16,10 +16,10 @@ To exercise your changes against a real Expo project:
 
 ```bash
 cd <some-expo-app>
-node /absolute/path/to/expo-local-build/bin/expo-local-build.js doctor
+node /absolute/path/to/local-expo-build/bin/local-expo-build.js doctor
 # or
-npm link /absolute/path/to/expo-local-build
-npx expo-local-build doctor
+npm link /absolute/path/to/local-expo-build
+npx local-expo-build doctor
 ```
 
 See the "Test your CLI locally in another Expo app" notes in the README for
@@ -90,7 +90,7 @@ pin works around an upstream bug — include a link to the issue.
 
 Please include:
 
-- `npx expo-local-build doctor` output (sanitized — passwords are gitignored
+- `npx local-expo-build doctor` output (sanitized — passwords are gitignored
   but copy carefully anyway).
 - Node / JDK / `eas-cli` versions.
 - The exact command + flags you ran.

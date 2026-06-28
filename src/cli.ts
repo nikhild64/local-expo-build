@@ -10,7 +10,7 @@ const pkg = require('../package.json');
 const program = new Command();
 
 program
-  .name('expo-local-build')
+  .name('local-expo-build')
   .description(
     'Local Expo Android build CLI — bypasses EAS cloud builds. ' +
       'Prebuild, pin Gradle, bump version, sign with your JKS, run gradlew, sync EAS.'
@@ -28,7 +28,7 @@ registerDoctorCommand(program);
 program
   .parseAsync(process.argv)
   .catch((err) => {
-    console.error(kleur.red('\nexpo-local-build failed:'));
+    console.error(kleur.red('\nlocal-expo-build failed:'));
     console.error(err?.stack || err?.message || err);
     process.exit(1);
   });

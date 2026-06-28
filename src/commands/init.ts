@@ -36,7 +36,7 @@ export function registerInitCommand(program: Command): void {
     .option('--no-doctor', 'skip the pre-flight `doctor` run')
     .action(async (opts, cmd) => {
       const { cwd, dryRun } = getCtx(cmd);
-      log.step('expo-local-build init');
+      log.step('local-expo-build init');
       log.dim('One-time setup for local Expo Android builds · you keep full signing control');
       log.dim(`Target: ${cwd}`);
 
@@ -46,7 +46,7 @@ export function registerInitCommand(program: Command): void {
         const { failedCount } = await runDoctor({
           cwd,
           dryRun,
-          title: 'expo-local-build init › pre-flight checks',
+          title: 'local-expo-build init › pre-flight checks',
         });
         if (failedCount > 0) {
           const proceed = await confirm({
@@ -119,7 +119,7 @@ export function registerInitCommand(program: Command): void {
         if (wantsKs) {
           await ensureKeystore(cwd);
         } else {
-          log.dim('Skipping keystore setup. Run later: npx expo-local-build keystore setup');
+          log.dim('Skipping keystore setup. Run later: npx local-expo-build keystore setup');
         }
       }
 
@@ -127,6 +127,6 @@ export function registerInitCommand(program: Command): void {
       log.info('Next steps:');
       log.dim('  npm run build:android:aab    # build a release AAB');
       log.dim('  npm run build:android:apk    # build a release APK');
-      log.dim('  npx expo-local-build doctor  # re-run env checks any time');
+      log.dim('  npx local-expo-build doctor  # re-run env checks any time');
     });
 }

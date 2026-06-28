@@ -29,7 +29,7 @@ export function registerBuildCommand(program: Command): void {
       const task: 'assembleRelease' | 'bundleRelease' = opts.apk ? 'assembleRelease' : 'bundleRelease';
       const kind = task === 'bundleRelease' ? 'AAB' : 'APK';
 
-      log.step(`expo-local-build android (${kind})`);
+      log.step(`local-expo-build android (${kind})`);
       log.dim('Local build · runs on your machine · saves an EAS cloud build credit');
       log.dim(`cwd: ${ctx.cwd}`);
       if (ctx.dryRun) {

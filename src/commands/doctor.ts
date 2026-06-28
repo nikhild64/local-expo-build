@@ -419,15 +419,15 @@ function buildSuggestions({ androidPkg, easLink, ks, jks, cred }: SuggestionCtx)
     // Prefer rehydrate when credentials.json + .jks are already on disk —
     // it's one prompt and no password re-entry.
     if (jks.warn && /keystore rehydrate/.test(jks.detail || '')) {
-      out.push('Rehydrate from credentials.json:         npx expo-local-build keystore rehydrate');
+      out.push('Rehydrate from credentials.json:         npx local-expo-build keystore rehydrate');
     } else {
-      out.push('Set up the signing keystore:             npx expo-local-build keystore setup');
+      out.push('Set up the signing keystore:             npx local-expo-build keystore setup');
     }
   } else if (!ks.props) {
     out.push('Finish keystore.properties:              fill in storePassword / keyPassword (no FILL_IN)');
   } else if (jks.warn) {
     out.push(
-      'Add the .jks file:                       npx expo-local-build keystore create | import | fetch | rehydrate'
+      'Add the .jks file:                       npx local-expo-build keystore create | import | fetch | rehydrate'
     );
   }
   if (cred.result.warn && !cred.exists) {
@@ -445,7 +445,7 @@ function buildSuggestions({ androidPkg, easLink, ks, jks, cred }: SuggestionCtx)
 export interface RunDoctorOpts {
   cwd: string;
   dryRun: boolean;
-  /** When true, prefix the section header (default 'expo-local-build doctor'). */
+  /** When true, prefix the section header (default 'local-expo-build doctor'). */
   title?: string;
 }
 
@@ -460,7 +460,7 @@ export interface RunDoctorResult {
  * whether to exit on failure — this function never calls process.exit.
  */
 export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<RunDoctorResult> {
-  log.step(title || 'expo-local-build doctor');
+  log.step(title || 'local-expo-build doctor');
 
   const results: CheckResult[] = [];
 
@@ -575,7 +575,7 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
   ) {
     log.warn(
       'This project is not linked to EAS. Linking enables managed keystore storage, ' +
-        'remote credentials, and `expo-local-build keystore fetch`.'
+        'remote credentials, and `local-expo-build keystore fetch`.'
     );
     const yes = await confirm({
       message: 'Run `eas init` now to link this project?',
@@ -649,7 +649,7 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
         log.error(`Rehydrate failed: ${err?.message || err}`);
       }
     } else {
-      log.dim('Skipped. Run later: npx expo-local-build keystore rehydrate');
+      log.dim('Skipped. Run later: npx local-expo-build keystore rehydrate');
     }
     console.log('');
   }
@@ -677,7 +677,7 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
         log.error(`Keystore setup failed: ${err?.message || err}`);
       }
     } else {
-      log.dim('Skipped. Run later: npx expo-local-build keystore setup');
+      log.dim('Skipped. Run later: npx local-expo-build keystore setup');
     }
     console.log('');
   }

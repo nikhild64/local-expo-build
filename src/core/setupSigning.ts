@@ -56,8 +56,8 @@ function ensureKeystoreInAndroidApp(cwd: string, storeFile: string): void {
       `Keystore file ${path.relative(cwd, dest).replace(/\\/g, '/')} not found, ` +
         `and no recovery source available.\nTried:\n${tried}\n\n` +
         `If your android/ directory was just wiped by \`expo prebuild --clean\`, ` +
-        `re-run \`npx expo-local-build keystore rehydrate\` (if you have credentials.json) ` +
-        `or \`npx expo-local-build keystore import <path-to-jks>\` to restore it.`
+        `re-run \`npx local-expo-build keystore rehydrate\` (if you have credentials.json) ` +
+        `or \`npx local-expo-build keystore import <path-to-jks>\` to restore it.`
     );
   }
 
@@ -123,7 +123,7 @@ export function setupSigning({ cwd }: SetupSigningOpts): void {
   if (!props) {
     throw new Error(
       `keystore.properties missing or incomplete at ${cwd}. ` +
-        `Run "expo-local-build keystore create|import|fetch" first.`
+        `Run "local-expo-build keystore create|import|fetch" first.`
     );
   }
   const gradlePath = path.join(cwd, 'android', 'app', 'build.gradle');

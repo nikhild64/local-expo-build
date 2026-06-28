@@ -1,5 +1,5 @@
 {
-  "name": "expo-local-build",
+  "name": "local-expo-build",
   "version": "0.2.0",
   "description": "One-stop CLI for local Expo Android APK / AAB builds. Bypasses EAS cloud, handles signing, scaffolds credentials.json + keystore.properties, and keeps EAS versionCode in sync.",
   "keywords": [
@@ -20,16 +20,16 @@
     "name": "Nikhil Dhawan",
     "email": "nikhild64@gmail.com"
   },
-  "homepage": "https://github.com/nikhild64/expo-local-build#readme",
+  "homepage": "https://github.com/nikhild64/local-expo-build#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nikhild64/expo-local-build.git"
+    "url": "git+https://github.com/nikhild64/local-expo-build.git"
   },
   "bugs": {
-    "url": "https://github.com/nikhild64/expo-local-build/issues"
+    "url": "https://github.com/nikhild64/local-expo-build/issues"
   },
   "bin": {
-    "expo-local-build": "bin/expo-local-build.js"
+    "local-expo-build": "bin/local-expo-build.js"
   },
   "main": "dist/cli.js",
   "files": [
@@ -44,7 +44,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "prepublishOnly": "npm run build",
-    "start": "node bin/expo-local-build.js"
+    "start": "node bin/local-expo-build.js"
   },
   "engines": {
     "node": ">=18"

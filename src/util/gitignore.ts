@@ -9,7 +9,7 @@ export function ensureGitignoreEntries(cwd: string, entries: string[]): void {
   const toAdd = entries.filter((e) => !lines.has(e));
   if (!toAdd.length) return;
   if (content.length && !content.endsWith('\n')) content += '\n';
-  content += '\n# expo-local-build\n' + toAdd.join('\n') + '\n';
+  content += '\n# local-expo-build\n' + toAdd.join('\n') + '\n';
   fs.writeFileSync(p, content, 'utf8');
   log.ok(`.gitignore: added ${toAdd.join(', ')}`);
 }

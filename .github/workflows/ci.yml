@@ -16,5 +16,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: node bin/expo-local-build.js --help
-      - run: node bin/expo-local-build.js doctor || true
+      - run: node bin/local-expo-build.js --help
+      - run: node bin/local-expo-build.js doctor || true

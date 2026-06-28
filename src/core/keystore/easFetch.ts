@@ -9,7 +9,7 @@ import { detectEasLink, isEasReady } from '../easLink';
  * EAS CLI does not expose a stable non-interactive keystore export, so we run
  * `eas credentials --platform android` interactively and ask the user to
  * download the .jks via the menu. After download, they re-run
- * `expo-local-build keystore import <path>`.
+ * `local-expo-build keystore import <path>`.
  *
  * Pre-flight: `eas credentials` requires BOTH a projectId (linked via
  * `eas init`) AND `eas.json` (created via `eas build:configure`). We check
@@ -20,7 +20,7 @@ export async function fetchKeystoreFromEas(cwd: string): Promise<void> {
   await ensureEasReady(cwd);
 
   log.info('Launching EAS credentials manager. Choose "Download Keystore" to save the .jks locally.');
-  log.dim('When done, re-run: expo-local-build keystore import <path-to-downloaded.jks>');
+  log.dim('When done, re-run: local-expo-build keystore import <path-to-downloaded.jks>');
   try {
     await execa('eas', ['credentials', '--platform', 'android'], { cwd, stdio: 'inherit' });
   } catch (err: any) {
@@ -31,7 +31,7 @@ export async function fetchKeystoreFromEas(cwd: string): Promise<void> {
   }
   log.warn(
     'EAS CLI does not provide a stable non-interactive keystore export. ' +
-      'After downloading, run `expo-local-build keystore import <path>` to register it.'
+      'After downloading, run `local-expo-build keystore import <path>` to register it.'
   );
 }
 
@@ -42,7 +42,7 @@ async function ensureEasReady(cwd: string): Promise<void> {
   if (link.kind === 'no-expo-config') {
     throw new Error(
       `This does not look like an Expo project (no app.json or app.config.*). ` +
-        `Run \`expo-local-build\` inside an Expo project root, or pass --cwd <path>.`
+        `Run \`local-expo-build\` inside an Expo project root, or pass --cwd <path>.`
     );
   }
 
@@ -66,7 +66,7 @@ async function ensureEasReady(cwd: string): Promise<void> {
       default: true,
     });
     if (!yes) {
-      throw new Error('Aborted. Run `eas init` manually, then re-run `expo-local-build keystore fetch`.');
+      throw new Error('Aborted. Run `eas init` manually, then re-run `local-expo-build keystore fetch`.');
     }
     await runEas(cwd, ['init'], 'eas init');
     link = detectEasLink(cwd);
@@ -79,7 +79,7 @@ async function ensureEasReady(cwd: string): Promise<void> {
   // Step 2: linked (or dynamic) but eas.json is missing — needs `eas build:configure`.
   if (link.kind === 'no-expo-config') {
     throw new Error(
-      'Lost track of Expo config after `eas init`. Please re-run `expo-local-build keystore fetch`.'
+      'Lost track of Expo config after `eas init`. Please re-run `local-expo-build keystore fetch`.'
     );
   }
   if (link.kind === 'dynamic-unreadable') {
@@ -105,7 +105,7 @@ async function ensureEasReady(cwd: string): Promise<void> {
     if (!yes) {
       throw new Error(
         'Aborted. Run `eas build:configure --platform android` manually, ' +
-          'then re-run `expo-local-build keystore fetch`.'
+          'then re-run `local-expo-build keystore fetch`.'
       );
     }
     await runEas(cwd, ['build:configure', '--platform', 'android'], 'eas build:configure');

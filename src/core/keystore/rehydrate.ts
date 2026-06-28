@@ -81,7 +81,7 @@ export async function rehydrateFromCredentialsJson(
   if (!cand) {
     throw new Error(
       'Cannot rehydrate: credentials.json is missing/incomplete or the referenced .jks was not found. ' +
-        'Run `expo-local-build keystore fetch` to download credentials from EAS first, ' +
+        'Run `local-expo-build keystore fetch` to download credentials from EAS first, ' +
         'or use `keystore import|create` for a manual flow.'
     );
   }

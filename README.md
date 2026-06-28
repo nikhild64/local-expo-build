@@ -1,13 +1,13 @@
-# expo-local-build
+# local-expo-build
 
 > One-stop CLI for **local** Expo Android APK / AAB builds. Bypass EAS cloud builds, keep full control of signing, and stop waiting in queues.
 
-[![npm version](https://img.shields.io/npm/v/expo-local-build.svg)](https://www.npmjs.com/package/expo-local-build)
-[![npm downloads](https://img.shields.io/npm/dm/expo-local-build.svg)](https://www.npmjs.com/package/expo-local-build)
-[![license](https://img.shields.io/npm/l/expo-local-build.svg)](https://github.com/nikhild64/expo-local-build/blob/main/LICENSE)
-[![node](https://img.shields.io/node/v/expo-local-build.svg)](https://nodejs.org/)
+[![npm version](https://img.shields.io/npm/v/local-expo-build.svg)](https://www.npmjs.com/package/local-expo-build)
+[![npm downloads](https://img.shields.io/npm/dm/local-expo-build.svg)](https://www.npmjs.com/package/local-expo-build)
+[![license](https://img.shields.io/npm/l/local-expo-build.svg)](https://github.com/nikhild64/local-expo-build/blob/main/LICENSE)
+[![node](https://img.shields.io/node/v/local-expo-build.svg)](https://nodejs.org/)
 
-`expo-local-build` automates the painful parts of running `expo prebuild` + `gradlew bundleRelease` yourself:
+`local-expo-build` automates the painful parts of running `expo prebuild` + `gradlew bundleRelease` yourself:
 
 - Detects your Expo SDK and pins the Gradle wrapper to a version that actually works (e.g. SDK 55 → Gradle 8.13, working around the `expo-manifests` `components.release` bug).
 - Bumps your app version and pulls the next `versionCode` from EAS so Play Store ingest doesn't reject the upload.
@@ -19,26 +19,26 @@
 
 **`doctor` is a setup wizard, not just a health check.** It detects missing pieces (`expo.android.package`, EAS link, `eas.json`, keystore) and offers to fix each one interactively — `eas init`, `eas build:configure`, keystore picker (with one-prompt `rehydrate` from `credentials.json` when possible), all chained.
 
-![expo-local-build init: doctor pre-flight + scaffolding in one command](https://raw.githubusercontent.com/nikhild64/expo-local-build/main/assets/screenshots/setup_init.png)
+![local-expo-build init: doctor pre-flight + scaffolding in one command](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/setup_init.png)
 
 Two modes:
 
-- **Scaffold** _(recommended)_ — `npx expo-local-build init` drops reusable, committable scripts into your project; you run `npm run build:android:aab` from then on.
-- **Runner** — `npx expo-local-build build android --aab`; one command, no files touched in your repo.
+- **Scaffold** _(recommended)_ — `npx local-expo-build init` drops reusable, committable scripts into your project; you run `npm run build:android:aab` from then on.
+- **Runner** — `npx local-expo-build build android --aab`; one command, no files touched in your repo.
 
 ## Install
 
 ```bash
-npm i -g expo-local-build
+npm i -g local-expo-build
 # or use it ad hoc
-npx expo-local-build --help
+npx local-expo-build --help
 ```
 
 ## Quick start (recommended — scaffold mode)
 
 ```bash
 cd <your-expo-project>
-npx expo-local-build init
+npx local-expo-build init
 ```
 
 `init` runs `doctor` first as a pre-flight, walks you through any missing setup (EAS link, `eas.json`, keystore), then drops the build scripts and adds the `build:android:apk` / `build:android:aab` entries to your `package.json`. Then:
@@ -50,13 +50,13 @@ npm run build:android:apk     # release APK → android/app/build/outputs/apk/re
 
 After the build finishes, the absolute path + size of the artifact is printed at the very end so you always know where it landed.
 
-Skip the pre-flight in CI: `npx expo-local-build init --no-doctor --no-keystore`.
+Skip the pre-flight in CI: `npx local-expo-build init --no-doctor --no-keystore`.
 
 ### Alternative — runner mode (no scaffold)
 
 ```bash
-npx expo-local-build doctor                 # env + setup wizard
-npx expo-local-build build android --aab    # full pipeline → .aab
+npx local-expo-build doctor                 # env + setup wizard
+npx local-expo-build build android --aab    # full pipeline → .aab
 ```
 
 Useful if you don't want any files committed to your repo and prefer to drive the whole pipeline from a single CLI call each time.
@@ -64,24 +64,24 @@ Useful if you don't want any files committed to your repo and prefer to drive th
 ## Commands
 
 ```text
-expo-local-build init [--force] [--no-keystore] [--no-doctor]
+local-expo-build init [--force] [--no-keystore] [--no-doctor]
                                             Scaffold scripts + package.json entries
                                             (runs `doctor` first by default)
 
-expo-local-build build android [--apk|--aab] [--profile <name>]
+local-expo-build build android [--apk|--aab] [--profile <name>]
                                [--clean] [--no-bump] [--no-sync] [--no-prebuild]
                                             Run the full pipeline → .aab|.apk
 
-expo-local-build doctor                     Env check + interactive auto-fix wizard
+local-expo-build doctor                     Env check + interactive auto-fix wizard
                                             (eas init → eas build:configure →
                                              keystore setup)
 
-expo-local-build keystore setup             Interactive picker:
+local-expo-build keystore setup             Interactive picker:
                                             rehydrate | existing | generate | EAS
-expo-local-build keystore import            Register an existing .jks
-expo-local-build keystore create            Generate a new keystore via keytool
-expo-local-build keystore fetch             Open `eas credentials` to download a .jks
-expo-local-build keystore rehydrate [--move]
+local-expo-build keystore import            Register an existing .jks
+local-expo-build keystore create            Generate a new keystore via keytool
+local-expo-build keystore fetch             Open `eas credentials` to download a .jks
+local-expo-build keystore rehydrate [--move]
                                             Bind credentials.json + .jks into
                                             keystore.properties (no password re-entry).
                                             --move deletes the source .jks after copy.
@@ -92,15 +92,15 @@ Global flags: `--cwd <path>`, `--verbose`, `--dry-run`.
 > **Dry-run** is wired into `build android` and the scaffolded orchestrator. Use it to preview the full pipeline (great for screenshots, sanity checks, CI plan-mode):
 >
 > ```bash
-> npx expo-local-build --dry-run build android --aab    # runner mode
+> npx local-expo-build --dry-run build android --aab    # runner mode
 > npm run build:android:aab -- --dry-run                # scaffold mode (or: node scripts/build.js aab --dry-run)
 > ```
 
-![Dry-run output: the full 7-step build pipeline with no side effects](https://raw.githubusercontent.com/nikhild64/expo-local-build/main/assets/screenshots/dryrun-build.png)
+![Dry-run output: the full 7-step build pipeline with no side effects](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/dryrun-build.png)
 
 ## How it compares
 
-|  | `eas build` (cloud) | `npx expo run:android` | `expo-local-build` |
+|  | `eas build` (cloud) | `npx expo run:android` | `local-expo-build` |
 | --- | --- | --- | --- |
 | Runs locally | No | Yes | **Yes** |
 | Produces a signed release `.aab` / `.apk` | Yes | No (debug) | **Yes** |
@@ -132,7 +132,7 @@ The lowest-friction path from a brand-new clone to a buildable project when your
 ### 1. Fetch the keystore via EAS CLI
 
 ```bash
-npx expo-local-build keystore fetch
+npx local-expo-build keystore fetch
 # Pre-flight: if eas.json or projectId is missing, we'll offer
 # to run `eas init` / `eas build:configure` before launching EAS.
 ```
@@ -159,7 +159,7 @@ You now have:
 ### 2. Bind everything in one step
 
 ```bash
-npx expo-local-build keystore rehydrate
+npx local-expo-build keystore rehydrate
 ```
 
 That copies the `.jks` referenced by `credentials.json` into `android/app/<basename>` and writes `keystore.properties` using the passwords already in `credentials.json` — **no re-typing**.
@@ -175,7 +175,7 @@ That copies the `.jks` referenced by `credentials.json` into `android/app/<basen
 ```bash
 npm run build:android:aab        # scaffold mode
 # or
-npx expo-local-build build android --aab   # runner mode
+npx local-expo-build build android --aab   # runner mode
 ```
 
 > Tip: you can skip step 2 entirely — `doctor` detects the rehydrate state automatically and offers the same one-prompt fix inline.
@@ -197,7 +197,7 @@ npx expo-local-build build android --aab   # runner mode
 
 ## Multi-SDK support
 
-`expo-local-build` carries a small table of Gradle wrapper versions per SDK in [`src/core/pinGradle.ts`](src/core/pinGradle.ts):
+`local-expo-build` carries a small table of Gradle wrapper versions per SDK in [`src/core/pinGradle.ts`](src/core/pinGradle.ts):
 
 ```ts
 export const GRADLE_PIN: Record<number, string | null> = {
@@ -221,7 +221,7 @@ If your SDK isn't pinned, `pinGradle` is a no-op. Add a row + open a PR if a fut
 - `keytool` on `PATH` (ships with the JDK)
 - `eas-cli` is **optional** — only needed for EAS version sync, EAS keystore fetch, or doctor's `eas init` / `eas build:configure` auto-fixes
 
-Run `expo-local-build doctor` to verify all of the above.
+Run `local-expo-build doctor` to verify all of the above.
 
 ## How it works (pipeline)
 
@@ -277,15 +277,15 @@ The orchestrator (`scripts/build.js`) prints numbered progress (`▸ [3/7] bump 
 This happens when `expo prebuild --clean` (or the "android project is malformed — reinitialize?" prompt) wipes `android/` between keystore setup and the Gradle build. The pipeline restores it automatically as of v0.2.0 — make sure your scaffolded `scripts/setup-signing.js` is up to date:
 
 ```bash
-npx expo-local-build init --force
+npx local-expo-build init --force
 ```
 
 If the recovery itself fails, you'll get a clear list of paths it tried; the fix is usually:
 
 ```bash
-npx expo-local-build keystore rehydrate     # if you have credentials.json
+npx local-expo-build keystore rehydrate     # if you have credentials.json
 # or
-npx expo-local-build keystore import <path-to-jks>
+npx local-expo-build keystore import <path-to-jks>
 ```
 
 ### `eas credentials failed: Command failed with exit code 1`
@@ -297,7 +297,7 @@ eas init
 eas build:configure --platform android
 ```
 
-Then re-run `npx expo-local-build keystore fetch`.
+Then re-run `npx local-expo-build keystore fetch`.
 
 ### `Missing expo.android.package in app.json`
 
@@ -334,18 +334,18 @@ Three iteration loops, fastest to most-realistic:
 
 ```bash
 # 1. npm link — fastest dev loop
-cd expo-local-build && npm run build && npm link
-cd ../my-test-app && npm link expo-local-build
-# now changes in expo-local-build (with `npm run dev` watching) are picked up
-# on the next `npx expo-local-build ...` call from my-test-app.
+cd local-expo-build && npm run build && npm link
+cd ../my-test-app && npm link local-expo-build
+# now changes in local-expo-build (with `npm run dev` watching) are picked up
+# on the next `npx local-expo-build ...` call from my-test-app.
 
 # 2. npm pack — exactly what end users will install
-cd expo-local-build && npm run build && npm pack
-cd ../my-test-app && npm i ../expo-local-build/expo-local-build-0.2.0.tgz
+cd local-expo-build && npm run build && npm pack
+cd ../my-test-app && npm i ../local-expo-build/local-expo-build-0.2.0.tgz
 
 # 3. Direct invocation — no install at all
-cd expo-local-build && npm run build
-node /abs/path/expo-local-build/bin/expo-local-build.js doctor --cwd /abs/path/my-test-app
+cd local-expo-build && npm run build
+node /abs/path/local-expo-build/bin/local-expo-build.js doctor --cwd /abs/path/my-test-app
 ```
 
 ## Roadmap
