@@ -7,7 +7,9 @@
 [![license](https://img.shields.io/npm/l/local-expo-build.svg)](https://github.com/nikhild64/local-expo-build/blob/main/LICENSE)
 [![node](https://img.shields.io/node/v/local-expo-build.svg)](https://nodejs.org/)
 
-`local-expo-build` automates the painful parts of running `expo prebuild` + `gradlew bundleRelease` yourself:
+`local-expo-build` automates the painful parts of running `expo prebuild` + `gradlew bundleRelease` (or `xcodebuild archive`) yourself:
+
+**Android (stable):**
 
 - Detects your Expo SDK and pins the Gradle wrapper to a version that actually works (e.g. SDK 55 → Gradle 8.13, working around the `expo-manifests` `components.release` bug).
 - Bumps your app version and pulls the next `versionCode` from EAS so Play Store ingest doesn't reject the upload.
@@ -16,6 +18,13 @@
 - Restores your `.jks` into `android/app/` if `expo prebuild --clean` wipes it (no more `validateSigningRelease > Keystore file not found`).
 - Runs `gradlew assembleRelease` / `bundleRelease` and prints the absolute path + size of the produced artifact.
 - Pushes the new `versionCode` back to EAS via GraphQL so `eas build` / `eas submit` stay in sync.
+
+**iOS (experimental, macOS only — community-tested):**
+
+- Orchestrates `xcodebuild archive` + `-exportArchive` for `.ipa` output.
+- Auto-detects the workspace + scheme produced by `expo prebuild --platform ios`.
+- Generates `export-options.plist` per build with sensible defaults for `app-store` / `ad-hoc` / `development` / `enterprise` distribution methods.
+- Reads `.p12` + provisioning profile paths from `credentials.json` (same file format EAS downloads).
 
 **`doctor` is a setup wizard, not just a health check.** It detects missing pieces (`expo.android.package`, EAS link, `eas.json`, keystore) and offers to fix each one interactively — `eas init`, `eas build:configure`, keystore picker (with one-prompt `rehydrate` from `credentials.json` when possible), all chained.
 
@@ -68,13 +77,14 @@ local-expo-build init [--force] [--no-keystore] [--no-doctor]
                                             Scaffold scripts + package.json entries
                                             (runs `doctor` first by default)
 
-local-expo-build build android [--apk|--aab] [--profile <name>]
-                               [--clean] [--no-bump] [--no-sync] [--no-prebuild]
-                                            Run the full pipeline → .aab|.apk
-
 local-expo-build doctor                     Env check + interactive auto-fix wizard
                                             (eas init → eas build:configure →
                                              keystore setup)
+
+# ── Android (stable) ──
+local-expo-build build android [--apk|--aab] [--profile <name>]
+                               [--clean] [--no-bump] [--no-sync] [--no-prebuild]
+                                            Run the full Android pipeline → .aab|.apk
 
 local-expo-build keystore setup             Interactive picker:
                                             rehydrate | existing | generate | EAS
@@ -84,7 +94,19 @@ local-expo-build keystore fetch             Open `eas credentials` to download a
 local-expo-build keystore rehydrate [--move]
                                             Bind credentials.json + .jks into
                                             keystore.properties (no password re-entry).
-                                            --move deletes the source .jks after copy.
+
+# ── iOS (experimental, macOS only) ──
+local-expo-build build ios [--method <m>] [--scheme <s>] [--configuration <c>]
+                            [--team-id <id>] [--profile-name <n>] [--bundle-id <id>]
+                            [--clean] [--no-bump] [--no-prebuild]
+                                            Run the full iOS pipeline → .ipa
+                                            --method = app-store | ad-hoc |
+                                                       development | enterprise
+
+# ── Shared ──
+local-expo-build update-scripts [-y|--yes]
+                                            Refresh scaffolded scripts/*.js to the
+                                            version bundled with this CLI.
 ```
 
 Global flags: `--cwd <path>`, `--verbose`, `--dry-run`.
@@ -100,15 +122,16 @@ Global flags: `--cwd <path>`, `--verbose`, `--dry-run`.
 
 ## How it compares
 
-|  | `eas build` (cloud) | `npx expo run:android` | `local-expo-build` |
+|  | `eas build` (cloud) | `npx expo run:android/ios` | `local-expo-build` |
 | --- | --- | --- | --- |
 | Runs locally | No | Yes | **Yes** |
-| Produces a signed release `.aab` / `.apk` | Yes | No (debug) | **Yes** |
-| Manages release `signingConfig` for you | Yes | No | **Yes** |
-| Bumps `versionCode` from EAS automatically | Yes | No | **Yes** |
+| Produces a signed release `.aab` / `.apk` | Yes | No (debug) | **Yes (Android)** |
+| Produces a signed release `.ipa` | Yes | No (debug) | **Yes (iOS, experimental, macOS only)** |
+| Manages release signing config for you | Yes | No | **Yes** |
+| Bumps `versionCode` from EAS automatically | Yes | No | **Yes (Android)** |
 | Wait in cloud queue | Sometimes | Never | Never |
 | Works offline | No | Yes | **Yes** (after first prebuild) |
-| Needs `eas-cli` | Yes | No | Optional (only for version sync / EAS keystore) |
+| Needs `eas-cli` | Yes | No | Optional (only for version sync / EAS credentials fetch) |
 
 If you're happy with cloud builds, use `eas build`. This CLI is for teams who want the EAS workflow (managed signing, synced `versionCode`) but the speed and control of building on their own machine.
 
@@ -180,6 +203,97 @@ npx local-expo-build build android --aab   # runner mode
 
 > Tip: you can skip step 2 entirely — `doctor` detects the rehydrate state automatically and offers the same one-prompt fix inline.
 
+## iOS (experimental, macOS only)
+
+> **Status: community-tested.** The iOS pipeline ships behind an experimental banner because the maintainer develops on Windows and can't validate every build configuration. The code is built on Apple's documented `xcodebuild` interface and follows the same patterns as the Android side, but please [file issues](https://github.com/nikhild64/local-expo-build/issues) when you hit something — and PRs are very welcome.
+
+### Prerequisites
+
+iOS local builds are constrained by Apple and require all of:
+
+- **macOS** (Xcode is macOS-only — Apple does not ship `xcodebuild` for Linux or Windows)
+- **Xcode** 14+ with Command Line Tools (`xcode-select --install`)
+- **Apple Developer account** ($99/yr — required for distribution signing certificates)
+- **A distribution `.p12`** + **provisioning profile** installed in your keychain (drag the `.p12` into Keychain Access; double-click the `.mobileprovision` to install)
+
+`local-expo-build doctor` checks for Xcode / `xcodebuild` automatically on macOS hosts and skips the checks elsewhere.
+
+### Quick start (iOS)
+
+```bash
+# 1. Download credentials from EAS (same flow as Android)
+npx local-expo-build keystore fetch
+# In the EAS menu pick: iOS → Download credentials to credentials.json
+# This produces:
+#   - credentials.json with an `ios` section
+#   - ios/certs/dist.p12  (distribution certificate)
+#   - ios/certs/profile.mobileprovision  (provisioning profile)
+
+# 2. (one-time, manual) Import the .p12 into your login keychain
+#    and double-click the .mobileprovision file. Both go into ~/Library/...
+#    Xcode does this automatically on double-click.
+
+# 3. Build the .ipa
+npx local-expo-build build ios --method app-store \
+  --team-id ABCDE12345 \
+  --bundle-id com.yourcompany.yourapp \
+  --profile-name "Your Profile Name"
+```
+
+The build runs through these 5 steps:
+
+```text
+1/5 expo prebuild (ios)
+2/5 bump version
+3/5 detect Xcode workspace + credentials
+4/5 xcodebuild archive
+5/5 xcodebuild -exportArchive (method=app-store)
+
+Build complete (.ipa, 14.3 MB):
+  /path/to/your/app/ios/build/export/YourApp.ipa
+```
+
+Use `--dry-run` to preview the 5 steps without invoking xcodebuild.
+
+### What the CLI does NOT handle (yet)
+
+By design, the experimental iOS support keeps a tight scope so we don't ship untested Apple-keychain code that could leave your machine in a weird state. You're still responsible for:
+
+- **Keychain `.p12` import.** Double-click the file in Finder, or `security import dist.p12 -k ~/Library/Keychains/login.keychain-db -P <password>`.
+- **Provisioning profile install.** Double-click the `.mobileprovision`, or copy to `~/Library/MobileDevice/Provisioning Profiles/<UUID>.mobileprovision`.
+- **TestFlight / App Store upload.** Use `xcrun altool --upload-app` or Apple's Transporter app after the `.ipa` is built.
+
+These are on the roadmap (full `certs setup` flow + EAS cert fetch + TestFlight upload) for a future release once there's been enough community testing of the core build flow.
+
+### iOS-specific files
+
+| Path | Purpose | Gitignored? |
+| --- | --- | --- |
+| `credentials.json` → `ios` block | EAS local-credentials shape for iOS (`distributionCertificate.path/password`, `provisioningProfilePath`) | Yes (auto via the Android setup) |
+| `ios/build/export-options.plist` | Regenerated per build with the chosen distribution method | No — derived per-build, safe to commit or gitignore as you prefer |
+| `ios/build/<Scheme>.xcarchive` | Intermediate archive produced by `xcodebuild archive` | Yes (recommend adding `ios/build/` to `.gitignore`) |
+| `ios/build/export/<Scheme>.ipa` | The final `.ipa` | Yes (recommend adding `ios/build/` to `.gitignore`) |
+
+### Known caveats
+
+- **Auto-detected scheme is the workspace basename.** Works for Expo's default prebuild output; pass `--scheme MyOtherScheme` if your project has multiple schemes.
+- **Manual signing requires `--team-id`.** Without it, `xcodebuild` falls back to automatic signing, which only works for `development` builds if your Apple ID is logged into Xcode.
+- **Multi-bundle apps not handled.** If your project has app extensions (widgets, watch app, share extension), each needs its own provisioning profile and the current `--profile-name` flag only sets one. File an issue with your `app.json` `extra.eas.build.experimental.ios.appExtensions` setup if you hit this.
+- **No `bumpVersion` for iOS-specific `buildNumber`.** Today the bump step still updates `versionCode` in `android/app/build.gradle` (no-op on iOS-only builds). Expo's prebuild reads `expo.version` from `app.json` and writes it into `Info.plist`'s `CFBundleShortVersionString` — for `CFBundleVersion` (the iOS equivalent of `versionCode`) you currently need to manage that in `app.json` → `ios.buildNumber` manually. PRs to wire this up are welcome.
+
+### How it works (iOS pipeline)
+
+```text
+expo prebuild --platform ios
+  → (you import .p12 + provisioning profile manually, one-time)
+  → bump app.json version                       (src/core/bumpVersion.ts)
+  → detect ios/<Workspace>.xcworkspace          (src/core/ios/detect.ts)
+  → read credentials.json `ios` section         (src/core/ios/credentials.ts)
+  → write ios/build/export-options.plist        (src/core/ios/exportOptions.ts)
+  → xcodebuild archive                          (src/core/ios/xcodebuild.ts)
+  → xcodebuild -exportArchive → .ipa
+```
+
 ## Files this CLI creates / touches
 
 | Path | Purpose | Gitignored? |
@@ -215,13 +329,24 @@ If your SDK isn't pinned, `pinGradle` is a no-op. Add a row + open a PR if a fut
 
 ## Requirements
 
-- Node ≥ 18
+**All platforms:**
+
+- Node ≥ 20 (Node 18 reached EOL in April 2025)
+- `eas-cli` is **optional** — only needed for EAS version sync, EAS credentials fetch, or doctor's `eas init` / `eas build:configure` auto-fixes
+
+**Android builds (cross-platform):**
+
 - JDK 17 (recommended for Expo SDK 55)
 - Android SDK + `ANDROID_HOME` env var
 - `keytool` on `PATH` (ships with the JDK)
-- `eas-cli` is **optional** — only needed for EAS version sync, EAS keystore fetch, or doctor's `eas init` / `eas build:configure` auto-fixes
 
-Run `local-expo-build doctor` to verify all of the above.
+**iOS builds (macOS only):**
+
+- macOS (Apple does not ship `xcodebuild` for Linux or Windows)
+- Xcode 14+ with Command Line Tools (`xcode-select --install`)
+- Apple Developer account ($99/yr — for distribution signing certificates)
+
+Run `local-expo-build doctor` to verify all of the above — iOS-specific checks are auto-skipped on non-macOS hosts.
 
 ## How it works (pipeline)
 
@@ -350,9 +475,12 @@ node /abs/path/local-expo-build/bin/local-expo-build.js doctor --cwd /abs/path/m
 
 ## Roadmap
 
-- [ ] iOS local builds
-- [ ] Auto-update `GRADLE_PIN` table from a hosted manifest
-- [ ] Symbol upload (`mapping.txt` → Play Console / Sentry)
+- [x] iOS local builds (experimental in v0.4.0 — awaiting community testing)
+- [x] Auto-update `GRADLE_PIN` table from a hosted manifest (v0.3.0)
+- [ ] `certs setup` interactive flow for iOS (.p12 import + provisioning profile install via `security` / Keychain Access automation)
+- [ ] iOS `buildNumber` (CFBundleVersion) bump + EAS sync — parity with Android's `versionCode` flow
+- [ ] TestFlight / App Store Connect upload (`xcrun altool` / `notarytool` wrapper)
+- [ ] Symbol upload (`mapping.txt` → Play Console / Sentry; iOS `.dSYM` to Sentry)
 - [ ] CI presets (`init --ci` that scaffolds a GitHub Actions / GitLab CI workflow with base64-encoded secrets)
 
 ## Contributing

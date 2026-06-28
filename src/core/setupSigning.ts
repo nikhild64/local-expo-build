@@ -115,6 +115,169 @@ export function writeKeystoreProps(cwd: string, props: KeystoreProps): void {
 }
 
 /**
+ * Finds the index of the matching closing brace for the `{` at or after
+ * `startSearchFrom`. Returns -1 if no balanced match.
+ *
+ * Naive brace counter — does NOT understand groovy strings/comments, but for
+ * Expo's generated build.gradle the signingConfigs/android blocks don't
+ * contain braces inside strings, so this is safe in practice. If that ever
+ * changes we'll need a real tokenizer.
+ */
+function findMatchingBrace(s: string, startSearchFrom: number): number {
+  const openIdx = s.indexOf('{', startSearchFrom);
+  if (openIdx === -1) return -1;
+  let depth = 0;
+  for (let i = openIdx; i < s.length; i++) {
+    if (s[i] === '{') depth++;
+    else if (s[i] === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function findBlockStart(s: string, name: string): number {
+  const re = new RegExp(`\\b${name}\\s*\\{`);
+  const m = re.exec(s);
+  return m ? m.index : -1;
+}
+
+function releaseBlock(props: KeystoreProps): string {
+  return (
+    `        release {\n` +
+    `            storeFile file('${props.storeFile}')\n` +
+    `            storePassword '${props.storePassword}'\n` +
+    `            keyAlias '${props.keyAlias}'\n` +
+    `            keyPassword '${props.keyPassword}'\n` +
+    `        }\n`
+  );
+}
+
+/**
+ * Returns the gradle file with a `signingConfigs.release` block injected,
+ * plus a label for which strategy succeeded. Returns null if all strategies
+ * failed (caller throws with actionable error).
+ *
+ * Three strategies in order of fidelity:
+ *  1. **exact-match**: today's behavior — replace the precise indented debug
+ *     block. Preserves whitespace exactly. Fast path for unmodified Expo output.
+ *  2. **block-inject**: tolerantly find `signingConfigs { ... }`, inject the
+ *     release block before its closing brace. Survives whitespace / comment
+ *     drift in the Expo template.
+ *  3. **synthesize**: no `signingConfigs` block at all — insert one inside
+ *     `android { ... }`. Survives Expo deciding to drop the default debug
+ *     scaffold from prebuild output entirely.
+ */
+export function injectReleaseSigningConfig(
+  gradle: string,
+  props: KeystoreProps
+): { gradle: string; strategy: 'exact-match' | 'block-inject' | 'synthesize' } | null {
+  // ── Strategy 1: exact match (Expo's current default output) ──
+  const EXACT_DEFAULT = `    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }`;
+  const EXACT_REPLACEMENT = `    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+        release {
+            storeFile file('${props.storeFile}')
+            storePassword '${props.storePassword}'
+            keyAlias '${props.keyAlias}'
+            keyPassword '${props.keyPassword}'
+        }
+    }`;
+  if (gradle.includes(EXACT_DEFAULT)) {
+    return { gradle: gradle.replace(EXACT_DEFAULT, EXACT_REPLACEMENT), strategy: 'exact-match' };
+  }
+
+  // ── Strategy 2: tolerant block inject ──
+  // Find the signingConfigs block, jump to its matching closing brace, splice
+  // the release block in just before it.
+  const sigStart = findBlockStart(gradle, 'signingConfigs');
+  if (sigStart !== -1) {
+    const sigEnd = findMatchingBrace(gradle, sigStart);
+    if (sigEnd !== -1) {
+      // Insert release block right before the closing brace, preserving the
+      // surrounding indentation.
+      const before = gradle.slice(0, sigEnd);
+      const after = gradle.slice(sigEnd);
+      return { gradle: before + releaseBlock(props) + '    ' + after, strategy: 'block-inject' };
+    }
+  }
+
+  // ── Strategy 3: synthesize a new signingConfigs block inside android { } ──
+  const androidStart = findBlockStart(gradle, 'android');
+  if (androidStart !== -1) {
+    const openBrace = gradle.indexOf('{', androidStart);
+    if (openBrace !== -1) {
+      const before = gradle.slice(0, openBrace + 1);
+      const after = gradle.slice(openBrace + 1);
+      const block = `\n    signingConfigs {\n${releaseBlock(props)}    }\n`;
+      return { gradle: before + block + after, strategy: 'synthesize' };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Rewires the release buildType to use signingConfigs.release. Tries the
+ * historical pattern first (second occurrence of `signingConfig signingConfigs.debug`),
+ * then a more tolerant regex-based search inside the `release { ... }` block.
+ * No-op if `signingConfigs.release` is already wired up.
+ */
+export function wireReleaseBuildType(gradle: string): { gradle: string; changed: boolean } {
+  const TOKEN = 'signingConfig signingConfigs.debug';
+  const RELEASE = 'signingConfig signingConfigs.release';
+
+  // Already wired in the release block?
+  const releaseStart = findBlockStart(gradle, 'release');
+  if (releaseStart !== -1) {
+    const releaseEnd = findMatchingBrace(gradle, releaseStart);
+    if (releaseEnd !== -1) {
+      const releaseSlice = gradle.slice(releaseStart, releaseEnd);
+      if (releaseSlice.includes(RELEASE)) return { gradle, changed: false };
+    }
+  }
+
+  // Strategy A: historical "second occurrence" split.
+  const parts = gradle.split(TOKEN);
+  if (parts.length >= 3) {
+    return {
+      gradle:
+        parts[0] + TOKEN + parts[1] + RELEASE + parts.slice(2).join(TOKEN),
+      changed: true,
+    };
+  }
+
+  // Strategy B: replace the signingConfig line inside the release { ... } block
+  // (covers Expo templates that only have ONE `signingConfig signingConfigs.debug`).
+  if (releaseStart !== -1) {
+    const releaseEnd = findMatchingBrace(gradle, releaseStart);
+    if (releaseEnd !== -1) {
+      const before = gradle.slice(0, releaseStart);
+      const slice = gradle.slice(releaseStart, releaseEnd);
+      const after = gradle.slice(releaseEnd);
+      if (slice.includes(TOKEN)) {
+        return { gradle: before + slice.replace(TOKEN, RELEASE) + after, changed: true };
+      }
+    }
+  }
+
+  return { gradle, changed: false };
+}
+
+/**
  * Injects the release signingConfig into android/app/build.gradle.
  * Idempotent: if `signingConfigs.release` is already present, it's a no-op.
  */
@@ -139,50 +302,31 @@ export function setupSigning({ cwd }: SetupSigningOpts): void {
     return;
   }
 
-  const DEFAULT_SIGNING_BLOCK = `    signingConfigs {
-        debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
-        }
-    }`;
-
-  const NEW_SIGNING_BLOCK = `    signingConfigs {
-        debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
-        }
-        release {
-            storeFile file('${props.storeFile}')
-            storePassword '${props.storePassword}'
-            keyAlias '${props.keyAlias}'
-            keyPassword '${props.keyPassword}'
-        }
-    }`;
-
-  if (!gradle.includes(DEFAULT_SIGNING_BLOCK)) {
+  const injected = injectReleaseSigningConfig(gradle, props);
+  if (!injected) {
     throw new Error(
-      'Could not find the default signingConfigs block in build.gradle.\n' +
-        'The file may have been manually edited; add the release signing config by hand.'
+      'Could not inject the release signingConfig into android/app/build.gradle.\n' +
+        'All three injection strategies failed (exact match, tolerant block inject, synthesize).\n' +
+        'Your build.gradle may have been hand-edited or the Expo prebuild template changed shape.\n' +
+        'Add a `release { storeFile file(\'' +
+        props.storeFile +
+        "') ... }` block under signingConfigs manually, then re-run."
     );
   }
-  gradle = gradle.replace(DEFAULT_SIGNING_BLOCK, NEW_SIGNING_BLOCK);
-
-  const TOKEN = 'signingConfig signingConfigs.debug';
-  const parts = gradle.split(TOKEN);
-  if (parts.length >= 3) {
-    gradle =
-      parts[0] +
-      TOKEN +
-      parts[1] +
-      'signingConfig signingConfigs.release' +
-      parts.slice(2).join(TOKEN);
-  } else {
-    log.warn('Could not locate release buildType signing line — check build.gradle manually.');
+  gradle = injected.gradle;
+  if (injected.strategy !== 'exact-match') {
+    log.dim(`Used '${injected.strategy}' strategy to inject signingConfig.`);
   }
+
+  const wired = wireReleaseBuildType(gradle);
+  if (!wired.changed) {
+    log.warn(
+      'Could not locate the release buildType signing line — check that ' +
+        '`buildTypes { release { signingConfig signingConfigs.release } }` is set in build.gradle.'
+    );
+  }
+  gradle = wired.gradle;
+
   fs.writeFileSync(gradlePath, gradle, 'utf8');
   log.ok(`Release signing config injected (alias=${props.keyAlias})`);
 }

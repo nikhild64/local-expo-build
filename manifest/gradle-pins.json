@@ -1,0 +1,14 @@
+{
+  "_doc": "Live Gradle wrapper pins per Expo SDK. local-expo-build fetches this on every build (3s timeout, silent fallback to the bundled table in src/core/pinGradle.ts). Edit + commit to ship a pin change without an npm release.",
+  "_semantics": "string value = pin Gradle to that version. null = explicit 'no pin needed' (overrides the bundled table; use to roll back a bundled pin). Omitted SDK = defer to the bundled table.",
+  "_notes": {
+    "55": "Pinned to 8.13 — Gradle 9.0.0 (Expo SDK 55 default) breaks expo-manifests with 'SoftwareComponent with name release not found'."
+  },
+  "50": null,
+  "51": null,
+  "52": null,
+  "53": null,
+  "54": null,
+  "55": "8.13",
+  "56": null
+}

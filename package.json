@@ -1,15 +1,18 @@
 {
   "name": "local-expo-build",
-  "version": "0.2.0",
-  "description": "One-stop CLI for local Expo Android APK / AAB builds. Bypasses EAS cloud, handles signing, scaffolds credentials.json + keystore.properties, and keeps EAS versionCode in sync.",
+  "version": "0.4.0",
+  "description": "One-stop CLI for local Expo builds. Android (stable) → AAB/APK with EAS-synced versionCode and managed signing. iOS (experimental, macOS) → IPA via xcodebuild with auto export-options.plist.",
   "keywords": [
     "expo",
     "android",
+    "ios",
     "build",
     "aab",
     "apk",
+    "ipa",
     "eas",
     "gradle",
+    "xcodebuild",
     "keystore",
     "signing",
     "react-native",
@@ -43,11 +46,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "prepublishOnly": "npm run build",
+    "test": "npm run build && node --test \"test/**/*.test.js\"",
+    "test:only": "node --test \"test/**/*.test.js\"",
+    "prepublishOnly": "npm run build && node --test \"test/**/*.test.js\"",
     "start": "node bin/local-expo-build.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.2.1",

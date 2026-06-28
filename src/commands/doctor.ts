@@ -466,8 +466,8 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
 
   const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
   results.push({
-    name: 'Node >= 18',
-    ok: nodeMajor >= 18,
+    name: 'Node >= 20',
+    ok: nodeMajor >= 20,
     detail: `v${process.versions.node}`,
   });
 
@@ -507,6 +507,32 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
     detail: eas || 'not found (optional; needed for EAS sync)',
     warn: !eas,
   });
+
+  // iOS prerequisites — only meaningful on macOS. On other platforms we
+  // show a single dim "skipped (not macOS)" row instead of failing.
+  if (process.platform === 'darwin') {
+    const xcb = await which('xcodebuild', ['-version']);
+    results.push({
+      name: 'xcodebuild (iOS, optional)',
+      ok: !!xcb,
+      detail: xcb || 'not found (install Xcode from the App Store)',
+      warn: !xcb,
+    });
+    const xcrun = await which('xcrun', ['--version']);
+    results.push({
+      name: 'xcrun (iOS, optional)',
+      ok: !!xcrun,
+      detail: xcrun || 'not found (ships with Xcode Command Line Tools)',
+      warn: !xcrun,
+    });
+  } else {
+    results.push({
+      name: 'iOS build prerequisites',
+      ok: true,
+      warn: true,
+      detail: `skipped — iOS builds require macOS (you're on ${process.platform})`,
+    });
+  }
 
   const expoBin = await which('npx', ['--no-install', 'expo', '--version']);
   results.push({

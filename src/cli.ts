@@ -4,6 +4,7 @@ import { registerBuildCommand } from './commands/build';
 import { registerInitCommand } from './commands/init';
 import { registerKeystoreCommand } from './commands/keystore';
 import { registerDoctorCommand } from './commands/doctor';
+import { registerUpdateCommand } from './commands/update';
 
 const pkg = require('../package.json');
 
@@ -24,6 +25,7 @@ registerBuildCommand(program);
 registerInitCommand(program);
 registerKeystoreCommand(program);
 registerDoctorCommand(program);
+registerUpdateCommand(program);
 
 program
   .parseAsync(process.argv)
