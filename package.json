@@ -1,0 +1,64 @@
+{
+  "name": "expo-local-build",
+  "version": "0.2.0",
+  "description": "One-stop CLI for local Expo Android APK / AAB builds. Bypasses EAS cloud, handles signing, scaffolds credentials.json + keystore.properties, and keeps EAS versionCode in sync.",
+  "keywords": [
+    "expo",
+    "android",
+    "build",
+    "aab",
+    "apk",
+    "eas",
+    "gradle",
+    "keystore",
+    "signing",
+    "react-native",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "Nikhil Dhawan",
+    "email": "nikhild64@gmail.com"
+  },
+  "homepage": "https://github.com/nikhild64/expo-local-build#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nikhild64/expo-local-build.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nikhild64/expo-local-build/issues"
+  },
+  "bin": {
+    "expo-local-build": "bin/expo-local-build.js"
+  },
+  "main": "dist/cli.js",
+  "files": [
+    "bin",
+    "dist",
+    "templates",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "prepublishOnly": "npm run build",
+    "start": "node bin/expo-local-build.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.2.1",
+    "commander": "^12.1.0",
+    "execa": "^9.5.2",
+    "kleur": "^4.1.5",
+    "semver": "^7.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "@types/semver": "^7.5.8",
+    "typescript": "^5.7.2"
+  }
+}
