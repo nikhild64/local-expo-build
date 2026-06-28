@@ -1,6 +1,6 @@
 # local-expo-build
 
-> One-stop CLI for **local** Expo Android APK / AAB builds. Bypass EAS cloud builds, keep full control of signing, and stop waiting in queues.
+> One-stop CLI for **local** Expo Android APK / AAB builds — **works on Windows, macOS, and Linux** (unlike `eas build --local`, which rejects Windows). Own your signing, skip the EAS cloud queue, no eas.json required.
 
 [![npm version](https://img.shields.io/npm/v/local-expo-build.svg)](https://www.npmjs.com/package/local-expo-build)
 [![npm downloads](https://img.shields.io/npm/dm/local-expo-build.svg)](https://www.npmjs.com/package/local-expo-build)
@@ -117,23 +117,52 @@ Global flags: `--cwd <path>`, `--verbose`, `--dry-run`.
 > npx local-expo-build --dry-run build android --aab    # runner mode
 > npm run build:android:aab -- --dry-run                # scaffold mode (or: node scripts/build.js aab --dry-run)
 > ```
+>
+> **`--clean`** prompts interactively when neither `--clean` nor `--no-clean` is passed. Default is **No** (faster). Say yes after an Expo SDK upgrade, plugin change, or `MainActivity not found` / "android project is malformed" errors. Pass `--clean` or `--no-clean` explicitly to skip the prompt.
 
 ![Dry-run output: the full 7-step build pipeline with no side effects](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/dryrun-build.png)
 
 ## How it compares
 
-|  | `eas build` (cloud) | `npx expo run:android/ios` | `local-expo-build` |
-| --- | --- | --- | --- |
-| Runs locally | No | Yes | **Yes** |
-| Produces a signed release `.aab` / `.apk` | Yes | No (debug) | **Yes (Android)** |
-| Produces a signed release `.ipa` | Yes | No (debug) | **Yes (iOS, experimental, macOS only)** |
-| Manages release signing config for you | Yes | No | **Yes** |
-| Bumps `versionCode` from EAS automatically | Yes | No | **Yes (Android)** |
-| Wait in cloud queue | Sometimes | Never | Never |
-| Works offline | No | Yes | **Yes** (after first prebuild) |
-| Needs `eas-cli` | Yes | No | Optional (only for version sync / EAS credentials fetch) |
+|  | `eas build` (cloud) | `eas build --local` | `npx expo run:android/ios` | `local-expo-build` |
+| --- | --- | --- | --- | --- |
+| Runs locally | No | Yes | Yes | **Yes** |
+| **Works on Windows** | Yes (cloud) | **No** ¹ | Yes (debug only) | **Yes** |
+| Works on macOS / Linux | Yes (cloud) | Yes | Yes | **Yes** |
+| Produces a signed release `.aab` / `.apk` | Yes | Yes | No (debug) | **Yes (Android)** |
+| Produces a signed release `.ipa` | Yes | Yes | No (debug) | **Yes (iOS, experimental)** |
+| Counts against EAS free build quota | **Yes** | No | No | No |
+| Manages release signing config for you | Yes | Yes | No | **Yes** |
+| Bumps `versionCode` from EAS automatically | Yes | Yes | No | **Yes (Android)** |
+| Wait in cloud queue | Sometimes | Never | Never | Never |
+| Needs `eas-cli` installed | Yes | **Yes** | No | Optional ² |
+| Needs `eas.json` set up | Yes | **Yes** | No | No |
+| Needs EAS account / login | Yes | **Yes** | No | Optional ² |
+| Pipeline editable per-project | No | No | No | **Yes** (scaffold mode) |
 
-If you're happy with cloud builds, use `eas build`. This CLI is for teams who want the EAS workflow (managed signing, synced `versionCode`) but the speed and control of building on their own machine.
+¹ `eas build --platform android --local` errors with `"Unsupported platform, macOS or Linux is required to build apps for Android"` on Windows — EAS's local build infrastructure uses Unix-only tooling.
+
+² Only needed for: EAS keystore fetch, versionCode sync back to EAS, or doctor's `eas init` / `eas build:configure` auto-fixes. The build itself runs without any EAS dependency.
+
+**TL;DR:**
+
+- **On Windows?** `local-expo-build` is the only option in the Expo ecosystem to build Android locally.
+- **On Mac/Linux + happy with EAS?** Use `eas build --local` — it's the official path with managed credentials + `eas submit` integration.
+- **On Mac/Linux + want lightweight / no EAS lock-in?** `local-expo-build` is your fit — no eas.json, no login, fully editable pipeline.
+
+## Why not just use `eas build --local`?
+
+If you're on Mac or Linux **and** already invested in EAS (account, eas.json, profiles, `eas submit` workflow), `eas build --platform android --local` is the official Expo path and you should use it. It integrates seamlessly with `eas submit`, managed credentials, and the rest of the EAS toolbox.
+
+Use `local-expo-build` instead when **any** of these is true:
+
+1. **You're on Windows.** `eas build --local` literally won't run — it errors out with `"Unsupported platform, macOS or Linux is required to build apps for Android"`. This is the killer use case: there's no other path to local Expo Android builds on Windows.
+2. **You don't want an EAS account.** No login, no `eas.json`, no project-link ceremony. Just point at any Expo project and get a signed `.aab`.
+3. **You want to vendor + edit the build pipeline in your repo.** Scaffold mode drops 6 readable JS files into `scripts/` that you can customize per-project (custom version bumping, project-specific signing tweaks, pre/post hooks). `eas build` is a black box by design.
+4. **Your project pre-dates EAS** (SDK 50 era) and you never set up the EAS link. `local-expo-build` works on any Expo SDK ≥ 50 with no migration needed.
+5. **You want to script around predictable artifact paths.** Output always lands at `android/app/build/outputs/{apk,bundle}/release/...`. EAS local copies through temp dirs.
+
+Both tools can coexist. The CLI also writes a `credentials.json` at project root, which `eas submit` (and `eas build` cloud, if you ever want to use it) reads directly — your local-built `.aab` can still be uploaded via `eas submit --path /path/to/app.aab` without re-signing.
 
 ## Keystore sources
 

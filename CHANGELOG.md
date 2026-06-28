@@ -5,6 +5,36 @@ All notable changes to `local-expo-build` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-06-28
+
+### Added
+
+- **Interactive `--clean` prompt.** When you run `build android` / `build
+  ios` (runner mode) or `npm run build:android:*` (scaffold mode) in an
+  interactive terminal, the build asks once at the top whether to clean.
+  Hint text explains when to say yes (Expo SDK upgrade, plugin change,
+  "android project is malformed" / "MainActivity not found" errors).
+  Default is **No** — most builds don't need clean, and forgetting to
+  clean fails loud (errors) while forgetting NOT to clean wastes 1-2 min
+  silently every time.
+- **`--no-clean` flag** to skip the prompt and force no-clean. Useful when
+  scripting / aliasing the build invocation.
+- **Scaffold mode now honors `--clean` / `--no-clean`.** Previously these
+  flags only worked in runner mode; the templated `scripts/build.js`
+  silently ignored them. Now they're parsed from argv and propagated to
+  `expo prebuild`. Pass via `npm run build:android:aab -- --clean`.
+
+### Changed
+
+- All templated scripts bumped to `v0.4.1` version stamp. Users on v0.4.0
+  will see them as outdated when running `npx local-expo-build update-scripts`.
+
+### Behavior in non-interactive environments
+
+- CI / non-TTY: defaults to no-clean (unchanged from v0.4.0).
+- `--dry-run`: defaults to no-clean (so the dry-run output is deterministic).
+- Explicit `--clean` or `--no-clean` always wins, no prompt.
+
 ## [0.4.0] — 2026-06-28
 
 ### Added

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { execa } from 'execa';
 import { Command } from 'commander';
+import { confirm } from '@inquirer/prompts';
 import { getCtx } from '../util/ctx';
 import { log } from '../util/log';
 import { detectExpoSdk } from '../core/sdkDetect';
@@ -21,6 +22,31 @@ import {
 } from '../core/ios/exportOptions';
 import { xcodebuildArchive, xcodebuildExport } from '../core/ios/xcodebuild';
 
+/**
+ * Resolves whether to pass `--clean` to `expo prebuild`. Tri-state:
+ *   - `--clean` flag → true (skip prompt)
+ *   - `--no-clean` flag → false (skip prompt)
+ *   - neither, interactive TTY, not dry-run → interactive prompt (default: false)
+ *   - neither, non-TTY or dry-run → false (safe default for CI / previews)
+ *
+ * `opts.clean` is commander's representation: `true` for `--clean`, `false`
+ * for `--no-clean`, `undefined` when neither is passed.
+ */
+async function resolveCleanFlag(
+  opts: { clean?: boolean },
+  ctx: { dryRun: boolean }
+): Promise<boolean> {
+  if (opts.clean === true) return true;
+  if (opts.clean === false) return false;
+  if (!process.stdin.isTTY || ctx.dryRun) return false;
+  return await confirm({
+    message:
+      'Clean android/ before prebuild? (slower, but required after Expo SDK upgrade, ' +
+      'plugin change, or "android project is malformed" / "MainActivity not found" errors)',
+    default: false,
+  });
+}
+
 export function registerBuildCommand(program: Command): void {
   const build = program.command('build').description('Build commands');
 
@@ -30,7 +56,8 @@ export function registerBuildCommand(program: Command): void {
     .option('--apk', 'build APK (assembleRelease)')
     .option('--aab', 'build AAB (bundleRelease) — default')
     .option('--profile <profile>', 'EAS profile for versionCode fetch', 'production')
-    .option('--clean', 'pass --clean to expo prebuild')
+    .option('--clean', 'force `expo prebuild --clean` (skip the prompt)')
+    .option('--no-clean', 'force skip `--clean` (skip the prompt; also the default in CI / non-TTY)')
     .option('--no-bump', 'skip version bump')
     .option('--no-sync', 'skip EAS versionCode sync after build')
     .option('--no-prebuild', 'skip expo prebuild step')
@@ -49,12 +76,13 @@ export function registerBuildCommand(program: Command): void {
       const sdk = detectExpoSdk(ctx.cwd);
       log.ok(`Detected Expo SDK ${sdk.major} (${sdk.raw})`);
 
+      const shouldClean = await resolveCleanFlag(opts, ctx);
       if (opts.prebuild !== false) {
         log.step('1/6 expo prebuild');
         if (ctx.dryRun) {
-          log.dim(`[dry-run] would run: expo prebuild --platform android${opts.clean ? ' --clean' : ''}`);
+          log.dim(`[dry-run] would run: expo prebuild --platform android${shouldClean ? ' --clean' : ''}`);
         } else {
-          await prebuild({ cwd: ctx.cwd, clean: Boolean(opts.clean) });
+          await prebuild({ cwd: ctx.cwd, clean: shouldClean });
         }
       } else {
         log.dim('Skipping prebuild (--no-prebuild)');
@@ -138,7 +166,8 @@ export function registerBuildCommand(program: Command): void {
     .option('--team-id <id>', '10-character Apple team identifier (required for manual signing)')
     .option('--profile-name <name>', 'provisioning profile name (as listed in the .mobileprovision)')
     .option('--bundle-id <id>', 'app bundle identifier (read from app.json if omitted)')
-    .option('--clean', 'pass --clean to expo prebuild')
+    .option('--clean', 'force `expo prebuild --clean` (skip the prompt)')
+    .option('--no-clean', 'force skip `--clean` (skip the prompt; also the default in CI / non-TTY)')
     .option('--no-bump', 'skip version bump')
     .option('--no-prebuild', 'skip expo prebuild step')
     .action(async (opts, cmd) => {
@@ -161,11 +190,12 @@ export function registerBuildCommand(program: Command): void {
       log.ok(`Detected Expo SDK ${sdk.major} (${sdk.raw})`);
 
       // ── 1/5 prebuild ──
+      const shouldCleanIos = await resolveCleanFlag(opts, ctx);
       if (opts.prebuild !== false) {
         log.step('1/5 expo prebuild (ios)');
         if (ctx.dryRun) {
           log.dim(
-            `[dry-run] would run: expo prebuild --platform ios${opts.clean ? ' --clean' : ''}`
+            `[dry-run] would run: expo prebuild --platform ios${shouldCleanIos ? ' --clean' : ''}`
           );
         } else {
           await execa(
@@ -177,7 +207,7 @@ export function registerBuildCommand(program: Command): void {
               '--platform',
               'ios',
               '--non-interactive',
-              ...(opts.clean ? ['--clean'] : []),
+              ...(shouldCleanIos ? ['--clean'] : []),
             ],
             { cwd: ctx.cwd, stdio: 'inherit' }
           );
