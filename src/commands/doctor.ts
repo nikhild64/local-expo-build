@@ -6,6 +6,7 @@ import kleur from 'kleur';
 import { confirm, input } from '@inquirer/prompts';
 import { getCtx } from '../util/ctx';
 import { log } from '../util/log';
+import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
 import { detectExpoSdk } from '../core/sdkDetect';
 import { GRADLE_PIN } from '../core/pinGradle';
 import { detectEasLink, EasLinkResult } from '../core/easLink';
@@ -44,6 +45,23 @@ async function which(cmd: string, args: string[] = ['-version']): Promise<string
   try {
     const { stdout, stderr } = await execa(cmd, args, { reject: false, timeout: 10_000 });
     return (stdout || stderr || '').split('\n')[0]?.trim() || cmd;
+  } catch {
+    return null;
+  }
+}
+
+async function projectBinVersion(name: string, cwd: string): Promise<string | null> {
+  const bin = resolveProjectBin(name, cwd);
+  if (!bin) return null;
+  const { command, args, execa: execaOpts } = projectBinExecArgs(bin, ['--version']);
+  try {
+    const { stdout, stderr } = await execa(command, args, {
+      cwd,
+      reject: false,
+      timeout: 10_000,
+      ...execaOpts,
+    });
+    return (stdout || stderr || '').split('\n')[0]?.trim() || name;
   } catch {
     return null;
   }
@@ -534,11 +552,11 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
     });
   }
 
-  const expoBin = await which('npx', ['--no-install', 'expo', '--version']);
+  const expoBin = await projectBinVersion('expo', cwd);
   results.push({
     name: 'expo CLI (in project)',
     ok: !!expoBin,
-    detail: expoBin || 'not found — run `npm install` in your project',
+    detail: expoBin || 'not found — run `npm install` / `bun install` in your project',
   });
 
   try {

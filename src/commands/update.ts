@@ -8,6 +8,7 @@ import { log } from '../util/log';
 
 // Keep in sync with src/commands/init.ts.
 const TEMPLATE_SCRIPTS = [
+  'resolve-project-bin.js',
   'pin-gradle.js',
   'bump-version.js',
   'setup-signing.js',

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execaSync } from 'execa';
+import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
 
 /**
  * Returns the resolved Expo config (the inner `expo` object — so the call
@@ -8,8 +9,8 @@ import { execaSync } from 'execa';
  * never `config.expo.android.package`).
  *
  * Resolution order:
- *  1. If `app.config.js` / `app.config.ts` exists, shell out to
- *     `npx expo config --json --type public`. This is the source of truth
+ *  1. If `app.config.js` / `app.config.ts` exists, shell out to the local
+ *     `expo config --json --type public`. This is the source of truth
  *     for dynamic configs; static `app.json` (if any) gets merged in by the
  *     Expo CLI itself.
  *  2. Otherwise, parse `app.json` directly (fast path — no spawn).
@@ -70,17 +71,23 @@ export function invalidateExpoConfigCache(cwd?: string): void {
 }
 
 function readDynamicConfig(cwd: string): ExpoConfigResult | null {
+  const bin = resolveProjectBin('expo', cwd);
+  if (!bin) return null;
+
   try {
-    const result = execaSync(
-      'npx',
-      ['--no-install', 'expo', 'config', '--json', '--type', 'public'],
-      {
-        cwd,
-        reject: false,
-        timeout: 30_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    );
+    const { command, args, execa: execaOpts } = projectBinExecArgs(bin, [
+      'config',
+      '--json',
+      '--type',
+      'public',
+    ]);
+    const result = execaSync(command, args, {
+      cwd,
+      reject: false,
+      timeout: 30_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...execaOpts,
+    });
     if (result.exitCode !== 0 || !result.stdout) return null;
     const parsed = JSON.parse(result.stdout);
     const inner = parsed?.expo ?? parsed;

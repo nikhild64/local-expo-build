@@ -8,9 +8,11 @@ import { detectExpoSdk } from '../core/sdkDetect';
 import { GRADLE_PIN } from '../core/pinGradle';
 import { ensureKeystore } from '../core/keystore';
 import { ensureGitignoreEntries } from '../util/gitignore';
+import { detectPackageManager, formatRunScript } from '../util/resolveProjectBin';
 import { runDoctor } from './doctor';
 
 const TEMPLATE_SCRIPTS = [
+  'resolve-project-bin.js',
   'pin-gradle.js',
   'bump-version.js',
   'setup-signing.js',
@@ -125,8 +127,9 @@ export function registerInitCommand(program: Command): void {
 
       log.step('Init complete');
       log.info('Next steps:');
-      log.dim('  npm run build:android:aab    # build a release AAB');
-      log.dim('  npm run build:android:apk    # build a release APK');
+      const pm = detectPackageManager(cwd);
+      log.dim(`  ${formatRunScript(pm, 'build:android:aab')}    # build a release AAB`);
+      log.dim(`  ${formatRunScript(pm, 'build:android:apk')}    # build a release APK`);
       log.dim('  npx local-expo-build doctor  # re-run env checks any time');
     });
 }

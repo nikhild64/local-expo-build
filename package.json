@@ -1,6 +1,6 @@
 {
   "name": "local-expo-build",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "One-stop CLI for local Expo builds. Android (stable) → AAB/APK with EAS-synced versionCode and managed signing. iOS (experimental, macOS) → IPA via xcodebuild with auto export-options.plist.",
   "keywords": [
     "expo",

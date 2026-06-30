@@ -5,6 +5,22 @@ All notable changes to `local-expo-build` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-06-30
+
+### Fixed
+
+- **Bun / pnpm / yarn compatibility.** Expo CLI is now resolved from the
+  project's `node_modules` instead of hardcoded `npx expo …` calls. Fixes
+  scaffold mode (`scripts/build.js`) and runner mode (`build`, `doctor`,
+  dynamic `app.config.*` resolution) for projects that don't use npm/npx.
+- **`init` next-step hints** now match the detected package manager
+  (`bun run`, `pnpm run`, `yarn`, or `npm run`).
+
+### Added
+
+- Scaffolded `scripts/resolve-project-bin.js` helper (copied on `init` /
+  `update-scripts`).
+
 ## [0.4.1] — 2026-06-28
 
 ### Added

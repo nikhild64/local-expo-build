@@ -14,6 +14,7 @@ import { gradleRun } from '../core/gradleRun';
 import { syncEasVersion } from '../core/syncEasVersion';
 import { ensureKeystore } from '../core/keystore';
 import { assertMacOS, printIosExperimentalBanner } from '../util/platform';
+import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
 import { detectIosProject } from '../core/ios/detect';
 import { readIosCredentials } from '../core/ios/credentials';
 import {
@@ -198,19 +199,20 @@ export function registerBuildCommand(program: Command): void {
             `[dry-run] would run: expo prebuild --platform ios${shouldCleanIos ? ' --clean' : ''}`
           );
         } else {
-          await execa(
-            'npx',
-            [
-              '--no-install',
-              'expo',
-              'prebuild',
-              '--platform',
-              'ios',
-              '--non-interactive',
-              ...(shouldCleanIos ? ['--clean'] : []),
-            ],
-            { cwd: ctx.cwd, stdio: 'inherit' }
-          );
+          const bin = resolveProjectBin('expo', ctx.cwd);
+          if (!bin) {
+            throw new Error(
+              'expo CLI not found — install dependencies in your project (`npm install`, `bun install`, etc.)'
+            );
+          }
+          const { command, args, execa: execaOpts } = projectBinExecArgs(bin, [
+            'prebuild',
+            '--platform',
+            'ios',
+            '--non-interactive',
+            ...(shouldCleanIos ? ['--clean'] : []),
+          ]);
+          await execa(command, args, { cwd: ctx.cwd, stdio: 'inherit', ...execaOpts });
         }
       } else {
         log.dim('Skipping prebuild (--no-prebuild)');
