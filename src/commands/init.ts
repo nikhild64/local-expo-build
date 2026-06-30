@@ -9,17 +9,8 @@ import { GRADLE_PIN } from '../core/pinGradle';
 import { ensureKeystore } from '../core/keystore';
 import { ensureGitignoreEntries } from '../util/gitignore';
 import { detectPackageManager, formatRunScript } from '../util/resolveProjectBin';
+import { TEMPLATE_SCRIPTS } from '../core/scaffoldScripts';
 import { runDoctor } from './doctor';
-
-const TEMPLATE_SCRIPTS = [
-  'resolve-project-bin.js',
-  'pin-gradle.js',
-  'bump-version.js',
-  'setup-signing.js',
-  'sync-eas-version.js',
-  'print-artifact.js',
-  'build.js',
-];
 
 const APK_CHAIN = 'node scripts/build.js apk';
 const AAB_CHAIN = 'node scripts/build.js aab';

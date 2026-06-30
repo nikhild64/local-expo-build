@@ -71,6 +71,27 @@ export function detectPackageManager(cwd: string): PackageManager {
   return 'npm';
 }
 
+/** Runner command to invoke the latest published package. */
+export function getRunnerInvocation(pm: PackageManager): { command: string; args: string[] } {
+  switch (pm) {
+    case 'bun':
+      return { command: 'bunx', args: ['local-expo-build@latest'] };
+    case 'pnpm':
+      return { command: 'pnpm', args: ['dlx', 'local-expo-build@latest'] };
+    case 'yarn':
+      return { command: 'yarn', args: ['dlx', 'local-expo-build@latest'] };
+    default:
+      return { command: 'npx', args: ['local-expo-build@latest'] };
+  }
+}
+
+/** Format ad-hoc CLI invocation for the detected package manager. */
+export function formatCliInvoke(pm: PackageManager, subcommand = ''): string {
+  const { command, args } = getRunnerInvocation(pm);
+  const tail = subcommand ? ` ${subcommand}` : '';
+  return `${command} ${args.join(' ')}${tail}`;
+}
+
 /** Format a package.json script invocation for the detected package manager. */
 export function formatRunScript(pm: PackageManager, script: string): string {
   switch (pm) {

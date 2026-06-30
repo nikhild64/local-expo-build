@@ -5,6 +5,25 @@ All notable changes to `local-expo-build` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.3] — 2026-06-30
+
+### Added
+
+- **npm release update checks.** On every command (`init`, `build`, `doctor`, …),
+  the CLI checks the npm registry (24h cache) and warns when a newer
+  `local-expo-build` is published, e.g. `0.4.1 → 0.4.2`. In an interactive
+  terminal it asks **Update to vX.Y.Z and re-run?** — yes re-launches via
+  `bunx` / `npx` / `pnpm dlx` / `yarn dlx` `@latest` with the same args.
+  Non-TTY: prints the upgrade command only. Use `--yes-update` to re-run
+  without prompting. Skip checks with `--no-update-check` or
+  `LOCAL_EXPO_BUILD_SKIP_UPDATE_CHECK=1`.
+- **Proactive script update checks.** `build` and `doctor` now detect when
+  scaffolded `scripts/*.js` lag behind the installed CLI, show a warning, and
+  (in an interactive terminal) ask whether to refresh them. Use
+  `--no-update-check` to skip. `doctor` also lists script status in its report.
+
 ## [0.4.2] — 2026-06-30
 
 ### Fixed

@@ -7,6 +7,8 @@ import { confirm, input } from '@inquirer/prompts';
 import { getCtx } from '../util/ctx';
 import { log } from '../util/log';
 import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
+import { maybePromptScriptUpdate } from '../util/maybePromptScriptUpdate';
+import { compareScripts } from '../core/scaffoldScripts';
 import { detectExpoSdk } from '../core/sdkDetect';
 import { GRADLE_PIN } from '../core/pinGradle';
 import { detectEasLink, EasLinkResult } from '../core/easLink';
@@ -465,6 +467,7 @@ export interface RunDoctorOpts {
   dryRun: boolean;
   /** When true, prefix the section header (default 'local-expo-build doctor'). */
   title?: string;
+  skipUpdateCheck?: boolean;
 }
 
 export interface RunDoctorResult {
@@ -477,7 +480,12 @@ export interface RunDoctorResult {
  * interactive auto-fixes, and returns a summary. Callers (e.g. `init`) decide
  * whether to exit on failure — this function never calls process.exit.
  */
-export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<RunDoctorResult> {
+export async function runDoctor({
+  cwd,
+  dryRun,
+  title,
+  skipUpdateCheck,
+}: RunDoctorOpts): Promise<RunDoctorResult> {
   log.step(title || 'local-expo-build doctor');
 
   const results: CheckResult[] = [];
@@ -585,6 +593,22 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
   const credResult = credentialsJsonCheck(cwd, ksProps.props, easLink);
   results.push(credResult.result);
 
+  const scriptStatuses = compareScripts(cwd);
+  const scaffolded = scriptStatuses.filter((s) => s.exists);
+  const outdatedScripts = scaffolded.filter((s) => s.contentDiffers);
+  if (scaffolded.length) {
+    const latest = scriptStatuses[0]?.templateVersion || '?';
+    results.push({
+      name: 'Scaffolded scripts',
+      ok: outdatedScripts.length === 0,
+      warn: outdatedScripts.length > 0,
+      detail:
+        outdatedScripts.length === 0
+          ? `up to date (v${scaffolded[0]?.userVersion || latest})`
+          : `${outdatedScripts.length} outdated — bundled v${latest}`,
+    });
+  }
+
   console.log('');
   for (const r of results) {
     const icon = r.ok ? (r.warn ? kleur.yellow('!') : kleur.green('✓')) : kleur.red('✗');
@@ -602,6 +626,14 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
   if (suggestions.length) {
     console.log(kleur.bold('Suggested next steps to complete setup:'));
     suggestions.forEach((s, i) => console.log(`  ${kleur.cyan(`${i + 1}.`)} ${s}`));
+    console.log('');
+  }
+
+  if (outdatedScripts.length) {
+    console.log(kleur.bold('Scaffolded script updates:'));
+    console.log(
+      `  ${kleur.cyan('1.')} Refresh scripts: npx local-expo-build update-scripts`
+    );
     console.log('');
   }
 
@@ -726,6 +758,12 @@ export async function runDoctor({ cwd, dryRun, title }: RunDoctorOpts): Promise<
     console.log('');
   }
 
+  await maybePromptScriptUpdate({
+    cwd,
+    dryRun,
+    skip: skipUpdateCheck,
+  });
+
   const failed = results.filter((r) => !r.ok);
   if (failed.length) {
     log.error(`${failed.length} check(s) failed.`);
@@ -740,8 +778,8 @@ export function registerDoctorCommand(program: Command): void {
     .command('doctor')
     .description('Check your local environment for Expo Android builds')
     .action(async (_opts, cmd) => {
-      const { cwd, dryRun } = getCtx(cmd);
-      const { failedCount } = await runDoctor({ cwd, dryRun });
+      const { cwd, dryRun, skipUpdateCheck } = getCtx(cmd);
+      const { failedCount } = await runDoctor({ cwd, dryRun, skipUpdateCheck });
       if (failedCount > 0) process.exit(1);
     });
 }

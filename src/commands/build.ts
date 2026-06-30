@@ -15,6 +15,7 @@ import { syncEasVersion } from '../core/syncEasVersion';
 import { ensureKeystore } from '../core/keystore';
 import { assertMacOS, printIosExperimentalBanner } from '../util/platform';
 import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
+import { maybePromptScriptUpdate } from '../util/maybePromptScriptUpdate';
 import { detectIosProject } from '../core/ios/detect';
 import { readIosCredentials } from '../core/ios/credentials';
 import {
@@ -73,6 +74,12 @@ export function registerBuildCommand(program: Command): void {
       if (ctx.dryRun) {
         log.warn('DRY RUN — no files modified, no Gradle build executed.');
       }
+
+      await maybePromptScriptUpdate({
+        cwd: ctx.cwd,
+        dryRun: ctx.dryRun,
+        skip: ctx.skipUpdateCheck,
+      });
 
       const sdk = detectExpoSdk(ctx.cwd);
       log.ok(`Detected Expo SDK ${sdk.major} (${sdk.raw})`);
@@ -179,6 +186,12 @@ export function registerBuildCommand(program: Command): void {
       log.dim(`cwd: ${ctx.cwd}`);
 
       if (!ctx.dryRun) assertMacOS('build ios');
+
+      await maybePromptScriptUpdate({
+        cwd: ctx.cwd,
+        dryRun: ctx.dryRun,
+        skip: ctx.skipUpdateCheck,
+      });
 
       const method = String(opts.method) as IosExportMethod;
       if (!['app-store', 'ad-hoc', 'development', 'enterprise'].includes(method)) {

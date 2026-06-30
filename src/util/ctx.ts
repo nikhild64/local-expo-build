@@ -5,6 +5,7 @@ export interface GlobalCtx {
   cwd: string;
   verbose: boolean;
   dryRun: boolean;
+  skipUpdateCheck: boolean;
 }
 
 export function getCtx(cmd: Command): GlobalCtx {
@@ -14,5 +15,6 @@ export function getCtx(cmd: Command): GlobalCtx {
     cwd,
     verbose: Boolean(opts.verbose),
     dryRun: Boolean(opts.dryRun),
+    skipUpdateCheck: Boolean(opts.updateCheck === false),
   };
 }
