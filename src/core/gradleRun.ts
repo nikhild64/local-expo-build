@@ -24,7 +24,7 @@ export async function gradleRun({ cwd, task, onLine, signal }: GradleRunOpts): P
       cwd: androidDir,
       stdio: ['inherit', 'pipe', 'pipe'],
       shell: isWin,
-      signal,
+      cancelSignal: signal,
     });
     let rl: readline.Interface | undefined;
     let rlErr: readline.Interface | undefined;
@@ -49,7 +49,7 @@ export async function gradleRun({ cwd, task, onLine, signal }: GradleRunOpts): P
       rlErr?.close();
     }
   } else {
-    await execa(wrapper, [task], { cwd: androidDir, stdio: 'inherit', shell: isWin });
+    await execa(wrapper, [task], { cwd: androidDir, stdio: 'inherit', shell: isWin, cancelSignal: signal });
   }
 
   const artifact =

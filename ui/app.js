@@ -29,6 +29,7 @@
   const doctorSummaryBanner = document.getElementById('doctor-summary-banner');
   const btnRefreshDoctor = document.getElementById('btn-refresh-doctor');
   const doctorActionsBar = document.getElementById('doctor-actions-bar');
+  const btnFixAll = document.getElementById('btn-fix-all');
   const btnFixPkg = document.getElementById('btn-fix-pkg');
   const btnEasInit = document.getElementById('btn-eas-init');
   const btnEasConfigure = document.getElementById('btn-eas-configure');
@@ -54,10 +55,21 @@
   const btnTriggerEasFetch = document.getElementById('btn-trigger-eas-fetch');
   const btnTriggerEasAuto = document.getElementById('btn-trigger-eas-auto-gen');
   const btnTriggerEasUploadLocal = document.getElementById('btn-trigger-eas-upload-local');
+  const btnTriggerEasLink = document.getElementById('btn-trigger-eas-link');
+  const easLinkSummary = document.getElementById('eas-link-summary');
   const easKeystoreStatus = document.getElementById('eas-keystore-status');
   const easKeystoreList = document.getElementById('eas-keystore-list');
+  const easActionButtons = document.getElementById('eas-action-buttons');
   const scaffoldStatus = document.getElementById('scaffold-status');
   const btnScaffold = document.getElementById('btn-scaffold');
+
+  const buildTabDoctorBanner = document.getElementById('build-tab-doctor-banner');
+  const buildDoctorTitle = document.getElementById('build-doctor-title');
+  const buildDoctorBadge = document.getElementById('build-doctor-badge');
+  const buildDoctorText = document.getElementById('build-doctor-text');
+  const buildDoctorList = document.getElementById('build-doctor-list');
+  const btnBuildFixAll = document.getElementById('btn-build-fix-all');
+  const btnBuildGotoDoctor = document.getElementById('btn-build-goto-doctor');
 
   // Custom Modal Elements
   const modalOverlay = document.getElementById('custom-modal-overlay');
@@ -80,6 +92,7 @@
   let easAuth = null;
   let easKeystores = [];
   let doctorRequest = null;
+  let currentStatusData = null;
 
   // ── Custom Modal Dialog Manager ──
   function showModal({
@@ -102,7 +115,11 @@
 
       // Icon badge
       modalIconBadge.className = `modal-icon-badge ${type}`;
-      modalIconBadge.textContent = type === 'success' ? '✓' : type === 'error' ? '✕' : 'ℹ';
+      modalIconBadge.innerHTML = type === 'success'
+        ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>'
+        : type === 'error'
+        ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>'
+        : '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
 
       // Buttons
       modalBtnConfirm.textContent = confirmText;
@@ -195,26 +212,65 @@
       modalTitle.textContent = title;
       modalMessage.textContent = message;
       modalIconBadge.className = 'modal-icon-badge info';
-      modalIconBadge.textContent = 'ℹ';
+      modalIconBadge.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
       modalInputContainer.style.display = 'none';
       modalChoiceContainer.innerHTML = '';
-      modalChoiceContainer.style.display = 'grid';
+      modalChoiceContainer.style.display = 'flex';
+      modalChoiceContainer.style.flexDirection = 'column';
+      modalChoiceContainer.style.gap = '8px';
       modalBtnConfirm.textContent = confirmText;
       modalBtnCancel.textContent = 'Cancel';
       modalBtnCancel.style.display = 'inline-flex';
+
+      if (options.length > 3) {
+        const searchBox = document.createElement('div');
+        searchBox.className = 'choice-search-box';
+        searchBox.style.marginBottom = '4px';
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.className = 'form-input';
+        searchInput.placeholder = 'Search / filter projects...';
+        searchInput.style.padding = '8px 12px';
+        searchInput.style.fontSize = '13px';
+        searchBox.appendChild(searchInput);
+        modalChoiceContainer.appendChild(searchBox);
+
+        searchInput.addEventListener('input', () => {
+          const q = searchInput.value.toLowerCase().trim();
+          modalChoiceContainer.querySelectorAll('.choice-option').forEach((optBtn) => {
+            const val = optBtn.getAttribute('data-value') || '';
+            const text = optBtn.textContent.toLowerCase();
+            if (val === '__create__' || !q || text.includes(q)) {
+              optBtn.style.display = 'flex';
+            } else {
+              optBtn.style.display = 'none';
+            }
+          });
+        });
+
+        setTimeout(() => searchInput.focus(), 50);
+      }
+
       options.forEach((option) => {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'choice-option';
+        button.setAttribute('data-value', option.value);
         button.innerHTML = `<strong>${escapeHtml(option.label)}</strong>${option.detail ? `<span>${escapeHtml(option.detail)}</span>` : ''}`;
         button.addEventListener('click', () => {
           selected = option.value;
           modalChoiceContainer.querySelectorAll('.choice-option').forEach((item) => item.classList.remove('selected'));
           button.classList.add('selected');
         });
+        button.addEventListener('dblclick', () => {
+          selected = option.value;
+          cleanup();
+          resolve(selected);
+        });
         if (selected === option.value) button.classList.add('selected');
         modalChoiceContainer.appendChild(button);
       });
+
       modalOverlay.style.display = 'flex';
       const cleanup = () => {
         modalOverlay.style.display = 'none';
@@ -247,19 +303,25 @@
     fetchScaffoldStatus();
   }
 
+  function switchTab(targetTab) {
+    tabBtns.forEach((b) => {
+      if (b.getAttribute('data-tab') === targetTab) b.classList.add('active');
+      else b.classList.remove('active');
+    });
+    tabPanels.forEach((p) => {
+      if (p.id === `panel-${targetTab}`) p.classList.add('active');
+      else p.classList.remove('active');
+    });
+    if (targetTab === 'doctor') fetchDoctor();
+    if (targetTab === 'keystore') fetchKeystoreStatus();
+    if (targetTab === 'scaffold') fetchScaffoldStatus();
+  }
+
   // ── Tab Navigation ──
   function setupTabNavigation() {
     tabBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
-        const targetTab = btn.getAttribute('data-tab');
-        tabBtns.forEach((b) => b.classList.remove('active'));
-        tabPanels.forEach((p) => p.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById(`panel-${targetTab}`).classList.add('active');
-
-        if (targetTab === 'doctor') fetchDoctor();
-        if (targetTab === 'keystore') fetchKeystoreStatus();
-        if (targetTab === 'scaffold') fetchScaffoldStatus();
+        switchTab(btn.getAttribute('data-tab'));
       });
     });
 
@@ -291,6 +353,7 @@
       const res = await fetch('/api/status');
       if (!res.ok) return;
       const data = await res.json();
+      currentStatusData = data;
       hostInfo.textContent = `127.0.0.1:${data.port}`;
 
       if (data.projectName || data.folderName) {
@@ -423,6 +486,9 @@
   }
 
   function appendLog(line, type = 'dim') {
+    const welcome = logConsole.querySelector('.log-welcome-box');
+    if (welcome) welcome.remove();
+
     const div = document.createElement('div');
     div.className = `log-line ${type}`;
 
@@ -443,6 +509,13 @@
 
   // ── Build Form ──
   function setupBuildForm() {
+    if (btnBuildFixAll) {
+      btnBuildFixAll.addEventListener('click', () => fixAllDoctorIssues());
+    }
+    if (btnBuildGotoDoctor) {
+      btnBuildGotoDoctor.addEventListener('click', () => switchTab('doctor'));
+    }
+
     btnClearLog.addEventListener('click', () => {
       logConsole.innerHTML = '<div class="log-line dim">Log cleared.</div>';
     });
@@ -533,7 +606,9 @@
       }
     });
 
+    if (btnFixAll) btnFixAll.addEventListener('click', fixAllDoctorIssues);
     btnEasInit.addEventListener('click', linkEasProject);
+    if (btnTriggerEasLink) btnTriggerEasLink.addEventListener('click', () => linkEasProject(btnTriggerEasLink));
     btnEasConfigure.addEventListener('click', configureEas);
     btnRefreshAuth.addEventListener('click', fetchEasAuth);
     easTokenForm.addEventListener('submit', submitEasToken);
@@ -556,6 +631,131 @@
   }
 
   let doctorAbortController = null;
+  let lastDoctorSummary = null;
+
+  async function fixAllDoctorIssues() {
+    const originalText = btnFixAll ? btnFixAll.textContent : '';
+    if (btnFixAll) {
+      btnFixAll.disabled = true;
+      btnFixAll.textContent = 'Fixing all issues...';
+    }
+
+    try {
+      const caps = lastDoctorSummary?.capabilities || {};
+      const fixesApplied = [];
+
+      // 1. Fix Package Name if invalid or missing
+      if (caps.canFixAndroidPackage) {
+        const rawFolder = (currentStatusData && currentStatusData.folderName) || 'app';
+        const cleanName = rawFolder.toLowerCase().replace(/[^a-z0-9]/g, '') || 'app';
+        const defaultPkg = `com.example.${cleanName}`;
+
+        const selectedPkg = await showPrompt(
+          'Set Android Package Name',
+          'Enter your Android applicationId (e.g. com.yourcompany.yourapp):',
+          defaultPkg,
+          'com.yourcompany.yourapp',
+          (val) => {
+            if (!val) return 'Package name cannot be empty.';
+            if (!/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(val)) {
+              return 'Need at least two dot-separated segments (e.g. com.yourcompany.yourapp).';
+            }
+            return null;
+          }
+        );
+
+        if (selectedPkg) {
+          const res = await apiRequest('/api/doctor/fix-package', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ packageName: selectedPkg }),
+          });
+          if (res.res.ok) fixesApplied.push(`Set package name to ${selectedPkg}`);
+        }
+      }
+
+      // 2. Link EAS Project
+      if (caps.canEasInit) {
+        await linkEasProject();
+        fixesApplied.push('Linked EAS Project');
+      }
+
+      // 3. Create eas.json
+      if (caps.canEasConfigure) {
+        const res = await apiRequest('/api/eas/configure', { method: 'POST' });
+        if (res.res.ok) fixesApplied.push('Created eas.json');
+      }
+
+      // 4. Keystore Setup (Rehydrate / Fetch from EAS Cloud / Generate)
+      if (caps.rehydrateAvailable) {
+        const res = await apiRequest('/api/doctor/rehydrate', { method: 'POST' });
+        if (res.res.ok) fixesApplied.push('Synced credentials.json & keystore configuration');
+      } else if (caps.canSetupKeystore) {
+        let easFetched = false;
+        try {
+          const fetchRes = await apiRequest('/api/keystore/fetch-eas', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ overwrite: true }),
+          });
+          if (fetchRes.res.ok) {
+            easFetched = true;
+            fixesApplied.push(`Fetched cloud release keystore (${fetchRes.data.storeFile || 'release.jks'}) & credentials.json from EAS`);
+          }
+        } catch {
+          // No EAS keystore available or unlinked/unauthenticated
+        }
+
+        if (!easFetched) {
+          const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
+          const res = await apiRequest('/api/keystore/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              provider: 'generate',
+              params: {
+                filename: 'release.jks',
+                keyAlias: 'release',
+                storePassword: pass,
+                keyPassword: pass,
+                cn: 'Release Signer',
+                org: 'LocalExpoBuild',
+                country: 'US',
+              },
+            }),
+          });
+          if (res.res.ok) {
+            let easUploadMsg = '';
+            try {
+              const uploadRes = await apiRequest('/api/eas/keystores/upload', { method: 'POST' });
+              if (uploadRes.res.ok) {
+                easUploadMsg = ' & uploaded to EAS Cloud';
+              }
+            } catch {}
+            fixesApplied.push(`Generated new release keystore (release.jks) & credentials.json${easUploadMsg}`);
+          }
+        }
+      }
+
+      await showAlert(
+        'Quick Fix Complete!',
+        fixesApplied.length
+          ? `Successfully applied the following fixes:\n\n• ` + fixesApplied.join('\n• ')
+          : 'Environment checks updated.',
+        'success'
+      );
+
+      fetchDoctor(true);
+      fetchKeystoreStatus();
+    } catch (err) {
+      await showAlert('Error', err?.message || 'An error occurred during quick fix.', 'error');
+    } finally {
+      if (btnFixAll) {
+        btnFixAll.disabled = false;
+        btnFixAll.textContent = originalText;
+      }
+    }
+  }
 
   async function fetchDoctor(force = false) {
     if (force) {
@@ -611,6 +811,26 @@
     if (!isLoading) return;
     doctorActionsBar.style.display = 'none';
     doctorGrid.innerHTML = '';
+
+    doctorSummaryBanner.className = 'alert info margin-bottom';
+    doctorSummaryBanner.innerHTML = '<div style="display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600;"><span class="spinner"></span><span>Running environment diagnostics...</span></div>';
+
+    if (buildTabDoctorBanner) {
+      buildTabDoctorBanner.style.display = 'block';
+      if (buildDoctorBadge) {
+        buildDoctorBadge.textContent = 'Analyzing...';
+        buildDoctorBadge.className = 'check-status-badge warn';
+      }
+      if (buildDoctorTitle) {
+        buildDoctorTitle.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align: -2px; margin-right: 4px; fill: currentColor;"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>Running Environment Diagnostics...';
+      }
+      if (buildDoctorText) {
+        buildDoctorText.textContent = 'Checking SDK dependencies, keystore signing configuration, and EAS status...';
+      }
+      if (buildDoctorList) {
+        buildDoctorList.innerHTML = '<div style="display: flex; align-items: center; gap: 10px; padding: 6px 0; color: var(--color-text-secondary); font-size: 12px;"><span class="spinner"></span><span>Evaluating system configuration...</span></div>';
+      }
+    }
   }
 
   function renderDoctorResults(summary) {
@@ -622,32 +842,44 @@
     const failed = results.filter((r) => !r.ok);
     const warnings = results.filter((r) => r.ok && r.warn);
 
+    let actionCount = 0;
+    if (capabilities.canFixAndroidPackage) actionCount++;
+    if (capabilities.canEasInit) actionCount++;
+    if (capabilities.canEasConfigure) actionCount++;
+    if (capabilities.rehydrateAvailable) actionCount++;
+    if (capabilities.canSetupKeystore && !capabilities.rehydrateAvailable) actionCount++;
+
     if (failed.length > 0) {
       doctorSummaryBanner.className = 'alert danger margin-bottom';
-      renderDoctorSummary(
-        `⚠️ ${failed.length} check(s) failing. Fix these before building:`,
-        failed,
-        warnings
-      );
-    } else if (warnings.length > 0) {
+      const msg = warnings.length > 0
+        ? `${failed.length} check(s) failing & ${warnings.length} setup notice(s):`
+        : `${failed.length} check(s) failing. Fix these before building:`;
+      renderDoctorSummary(msg, failed, warnings);
+    } else if (warnings.length > 0 || actionCount > 0) {
       doctorSummaryBanner.className = 'alert info margin-bottom';
       renderDoctorSummary(
-        `✓ Core setup ready. ${warnings.length} notice/warning item${warnings.length === 1 ? '' : 's'} to review:`,
+        `Core setup ready. ${warnings.length || actionCount} setup item(s) / notice(s) to review:`,
         warnings
       );
     } else {
       doctorSummaryBanner.className = 'alert ok margin-bottom';
-      doctorSummaryBanner.textContent = '✓ Environment checks passed! You are ready to build.';
+      doctorSummaryBanner.textContent = 'All environment checks passed! You are ready to build.';
     }
 
     // Render capability buttons
+    lastDoctorSummary = summary;
     let hasAction = false;
     btnFixPkg.style.display = capabilities.canFixAndroidPackage ? 'inline-flex' : 'none';
     btnEasInit.style.display = capabilities.canEasInit ? 'inline-flex' : 'none';
     btnEasConfigure.style.display = capabilities.canEasConfigure ? 'inline-flex' : 'none';
     btnDoctorRehydrate.style.display = capabilities.rehydrateAvailable ? 'inline-flex' : 'none';
 
+    if (btnFixAll) {
+      btnFixAll.style.display = actionCount > 0 ? 'inline-flex' : 'none';
+    }
+
     if (
+      actionCount > 0 ||
       capabilities.canFixAndroidPackage ||
       capabilities.canEasInit ||
       capabilities.canEasConfigure ||
@@ -656,6 +888,87 @@
       hasAction = true;
     }
     doctorActionsBar.style.display = hasAction ? 'flex' : 'none';
+
+    // Render Build Tab Doctor Attention / Success Banner
+    if (buildTabDoctorBanner) {
+      if (actionCount > 0 || failed.length > 0 || warnings.length > 0) {
+        buildTabDoctorBanner.style.display = 'block';
+        buildTabDoctorBanner.style.background = 'rgba(216, 182, 56, 0.08)';
+        buildTabDoctorBanner.style.borderColor = 'var(--color-border-hi)';
+
+        if (buildDoctorBadge) {
+          if (failed.length > 0 && warnings.length > 0) {
+            buildDoctorBadge.textContent = `${failed.length} Failing • ${warnings.length} Notice(s)`;
+            buildDoctorBadge.className = 'check-status-badge fail';
+          } else if (failed.length > 0) {
+            buildDoctorBadge.textContent = `${failed.length} Failing Check(s)`;
+            buildDoctorBadge.className = 'check-status-badge fail';
+          } else {
+            buildDoctorBadge.textContent = `${warnings.length || actionCount} Setup Notice(s)`;
+            buildDoctorBadge.className = 'check-status-badge warn';
+          }
+        }
+
+        if (buildDoctorTitle) {
+          const svgIcon = '<svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align: -2px; margin-right: 4px; fill: currentColor;"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
+          if (failed.length > 0 && warnings.length > 0) {
+            buildDoctorTitle.innerHTML = `${svgIcon}Project Setup & Signing Attention Required (${failed.length} Failing, ${warnings.length} Notice(s))`;
+            buildDoctorTitle.style.color = 'var(--color-danger)';
+          } else if (failed.length > 0) {
+            buildDoctorTitle.innerHTML = `${svgIcon}Project Setup Attention Required (${failed.length} Failing)`;
+            buildDoctorTitle.style.color = 'var(--color-danger)';
+          } else {
+            buildDoctorTitle.innerHTML = `${svgIcon}Signing & EAS Setup Recommendations (${warnings.length || actionCount} Notice(s))`;
+            buildDoctorTitle.style.color = 'var(--color-warn)';
+          }
+        }
+
+        if (buildDoctorText) {
+          buildDoctorText.textContent = 'Want to sign your release app with a custom keystore or link with EAS? Resolve setup items below:';
+        }
+
+        if (buildDoctorList) {
+          let listHtml = '<ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12px; line-height: 1.6;">';
+          failed.forEach((f) => {
+            listHtml += `<li style="color: var(--color-danger); margin-bottom: 2px;"><strong>${escapeHtml(f.name)}:</strong> ${escapeHtml(f.detail || 'failing check')}</li>`;
+          });
+          warnings.forEach((w) => {
+            listHtml += `<li style="color: var(--color-warn); margin-bottom: 2px;"><strong>${escapeHtml(w.name)}:</strong> ${escapeHtml(w.detail || 'setup notice')}</li>`;
+          });
+          listHtml += '</ul>';
+          buildDoctorList.innerHTML = listHtml;
+          buildDoctorList.style.display = 'block';
+        }
+        if (btnBuildFixAll) btnBuildFixAll.style.display = 'inline-flex';
+      } else {
+        // All checks & setup items passed — render green success banner
+        buildTabDoctorBanner.style.display = 'block';
+        buildTabDoctorBanner.style.background = 'rgba(34, 197, 94, 0.08)';
+        buildTabDoctorBanner.style.borderColor = 'rgba(34, 197, 94, 0.3)';
+
+        if (buildDoctorBadge) {
+          buildDoctorBadge.textContent = 'ALL PASS';
+          buildDoctorBadge.className = 'check-status-badge pass';
+        }
+
+        if (buildDoctorTitle) {
+          const checkSvg = '<svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align: -3px; margin-right: 6px; fill: currentColor;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
+          buildDoctorTitle.innerHTML = `${checkSvg}Project Setup & Release Signing Ready`;
+          buildDoctorTitle.style.color = '#4ade80';
+        }
+
+        if (buildDoctorText) {
+          buildDoctorText.textContent = 'All environment checks, Android package config, EAS linking, and release signing credentials passed. You are ready to start building!';
+        }
+
+        if (buildDoctorList) {
+          buildDoctorList.innerHTML = '';
+          buildDoctorList.style.display = 'none';
+        }
+
+        if (btnBuildFixAll) btnBuildFixAll.style.display = 'none';
+      }
+    }
 
     // Render Grid Cards
     doctorGrid.innerHTML = '';
@@ -684,22 +997,52 @@
     heading.textContent = message;
     doctorSummaryBanner.appendChild(heading);
 
-    const checks = [...primaryChecks, ...secondaryWarnings];
-    const list = document.createElement('ul');
-    list.className = 'doctor-summary-list';
-    checks.forEach((check) => {
-      const item = document.createElement('li');
-      const name = document.createElement('strong');
-      name.textContent = check.name;
-      item.appendChild(name);
-      if (check.detail) {
-        const detail = document.createElement('span');
-        detail.textContent = ` — ${check.detail}`;
-        item.appendChild(detail);
+    if (primaryChecks.length > 0) {
+      const list = document.createElement('ul');
+      list.className = 'doctor-summary-list';
+      primaryChecks.forEach((check) => {
+        const item = document.createElement('li');
+        const name = document.createElement('strong');
+        name.textContent = check.name;
+        item.appendChild(name);
+        if (check.detail) {
+          const detail = document.createElement('span');
+          detail.textContent = ` — ${check.detail}`;
+          item.appendChild(detail);
+        }
+        list.appendChild(item);
+      });
+      doctorSummaryBanner.appendChild(list);
+    }
+
+    if (secondaryWarnings.length > 0) {
+      if (primaryChecks.length > 0) {
+        const subHeading = document.createElement('div');
+        subHeading.style.marginTop = '10px';
+        subHeading.style.marginBottom = '4px';
+        subHeading.style.fontWeight = '700';
+        subHeading.style.fontSize = '12px';
+        subHeading.style.color = 'var(--color-text-secondary)';
+        subHeading.textContent = 'Notices & Recommendations:';
+        doctorSummaryBanner.appendChild(subHeading);
       }
-      list.appendChild(item);
-    });
-    doctorSummaryBanner.appendChild(list);
+
+      const warnList = document.createElement('ul');
+      warnList.className = 'doctor-summary-list';
+      secondaryWarnings.forEach((check) => {
+        const item = document.createElement('li');
+        const name = document.createElement('strong');
+        name.textContent = check.name;
+        item.appendChild(name);
+        if (check.detail) {
+          const detail = document.createElement('span');
+          detail.textContent = ` — ${check.detail}`;
+          item.appendChild(detail);
+        }
+        warnList.appendChild(item);
+      });
+      doctorSummaryBanner.appendChild(warnList);
+    }
   }
 
   // ── Keystore Tab ──
@@ -917,9 +1260,13 @@
     }
   }
 
-  async function linkEasProject() {
-    const originalText = btnEasInit.textContent;
-    btnEasInit.disabled = true;
+  async function linkEasProject(targetBtn) {
+    const btn = (targetBtn && targetBtn.target ? null : targetBtn) || btnEasInit;
+    const originalText = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Loading EAS projects…';
+    }
     try {
       if (!easAuth?.authenticated && !await requestEasToken()) return;
       const accounts = easAuth.accounts || [];
@@ -931,12 +1278,14 @@
       });
       if (!accountId) return;
       const account = accounts.find((item) => item.id === accountId);
-      btnEasInit.textContent = 'Loading EAS projects…';
+      if (btn) btn.textContent = 'Loading EAS projects…';
       const { res, data } = await apiRequest(`/api/eas/projects?account=${encodeURIComponent(account.name)}`);
       if (!res.ok) return showAlert('Could not load projects', data.error || 'Please try again.', 'error');
       const projects = Array.isArray(data.projects) ? data.projects : [];
-      const options = projects.map((project) => ({ value: project.id, label: project.fullName || project.name, detail: project.slug || project.id }));
-      options.push({ value: '__create__', label: 'Create a new EAS project', detail: `in ${account.name}` });
+      const options = [
+        { value: '__create__', label: '+ Create a new EAS project', detail: `in ${account.name}` },
+        ...projects.map((project) => ({ value: project.id, label: project.fullName || project.name, detail: project.slug || project.id })),
+      ];
       const projectId = await showChoiceModal({ title: 'Link EAS project', message: 'Select an existing project or create one.', options });
       if (!projectId) return;
       let payload;
@@ -964,8 +1313,10 @@
     } catch (err) {
       await showAlert('Could not link EAS project', err.message || 'A network error occurred while contacting EAS.', 'error');
     } finally {
-      btnEasInit.disabled = false;
-      btnEasInit.textContent = originalText;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     }
   }
 
@@ -997,8 +1348,12 @@
       easKeystores = [];
       easKeystoreList.innerHTML = '';
       easKeystoreStatus.textContent = data.error || 'Link an EAS project and authenticate to list stored keystores.';
+      if (easLinkSummary) easLinkSummary.textContent = 'Not linked to an EAS project';
+      if (easActionButtons) easActionButtons.style.display = 'none';
       return;
     }
+    if (easLinkSummary) easLinkSummary.textContent = 'Linked to EAS project';
+    if (easActionButtons) easActionButtons.style.display = 'flex';
     easKeystores = data.keystores || [];
     renderEasKeystores();
   }
@@ -1007,8 +1362,10 @@
     if (!easKeystores.length) {
       easKeystoreStatus.textContent = 'No Android keystores are stored for this EAS project.';
       easKeystoreList.innerHTML = '';
+      if (btnTriggerEasFetch) btnTriggerEasFetch.style.display = 'none';
       return;
     }
+    if (btnTriggerEasFetch) btnTriggerEasFetch.style.display = 'inline-flex';
     easKeystoreStatus.textContent = 'Choose the Android build credentials to fetch.';
     easKeystoreList.innerHTML = easKeystores.map((store) => `<label class="remote-list-item"><input type="radio" name="eas-keystore" value="${escapeHtml(store.buildCredentialsId)}" ${store.isDefault ? 'checked' : ''}><span><strong>${escapeHtml(store.name)}</strong>${store.isDefault ? ' <em>Default</em>' : ''}<small>${escapeHtml(store.keyAlias || 'No alias')} · ${escapeHtml(store.type)}${store.applicationIdentifier ? ` · ${escapeHtml(store.applicationIdentifier)}` : ''}</small></span></label>`).join('');
   }

@@ -3,6 +3,7 @@ import path from 'path';
 import { execa } from 'execa';
 import { input, password } from '@inquirer/prompts';
 import { writeKeystoreProps } from '../setupSigning';
+import { writeCredentialsJson } from '../writeCredentialsJson';
 import { log } from '../../util/log';
 
 export interface GenerateKeystoreParams {
@@ -111,7 +112,13 @@ export async function generateKeystore(
     keyAlias,
     keyPassword,
   });
-  log.ok(`Keystore generated and keystore.properties written.`);
+  writeCredentialsJson(cwd, {
+    storeFile: filename,
+    storePassword,
+    keyAlias,
+    keyPassword,
+  });
+  log.ok(`Keystore generated, keystore.properties & credentials.json written.`);
   log.warn(
     `BACK UP ${destPath} AND YOUR PASSWORDS off-machine. Losing them means you cannot ship updates to your app.`
   );

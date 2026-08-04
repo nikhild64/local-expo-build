@@ -22,7 +22,7 @@ export async function prebuild({ cwd, clean = false, onLine, signal }: PrebuildO
   }
   const { command, args: execArgs, execa: execaOpts } = projectBinExecArgs(bin, args);
   if (onLine) {
-    const proc = execa(command, execArgs, { cwd, stdio: ['inherit', 'pipe', 'pipe'], signal, ...execaOpts });
+    const proc = execa(command, execArgs, { cwd, stdio: ['inherit', 'pipe', 'pipe'], cancelSignal: signal, ...execaOpts });
     let rl: readline.Interface | undefined;
     let rlErr: readline.Interface | undefined;
     if (proc.stdout) {
@@ -46,6 +46,6 @@ export async function prebuild({ cwd, clean = false, onLine, signal }: PrebuildO
       rlErr?.close();
     }
   } else {
-    await execa(command, execArgs, { cwd, stdio: 'inherit', ...execaOpts });
+    await execa(command, execArgs, { cwd, stdio: 'inherit', cancelSignal: signal, ...execaOpts });
   }
 }

@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { confirm, input, password } from '@inquirer/prompts';
 import { writeKeystoreProps } from '../setupSigning';
+import { writeCredentialsJson } from '../writeCredentialsJson';
 import { log } from '../../util/log';
 
 interface CredentialsMatch {
@@ -177,5 +178,11 @@ export async function importExistingKeystore(
     keyAlias,
     keyPassword,
   });
-  log.ok('keystore.properties written.');
+  writeCredentialsJson(cwd, {
+    storeFile: filename,
+    storePassword,
+    keyAlias,
+    keyPassword,
+  });
+  log.ok('keystore.properties & credentials.json written.');
 }

@@ -4,6 +4,7 @@ import { EasAuth, easGraphql } from '../eas/api';
 import { ensureGitignoreEntries } from '../../util/gitignore';
 import { KeystoreProps, readKeystoreProps, writeKeystoreProps } from '../setupSigning';
 import { writeCredentialsJson } from '../writeCredentialsJson';
+import { readExpoConfig } from '../expoConfig';
 
 export interface EasKeystoreSummary {
   buildCredentialsId: string;
@@ -36,22 +37,7 @@ const KEYSTORES_QUERY = `
     } }
   }`;
 
-const CREATE_KEYSTORE_MUTATION = `
-  mutation CreateAndroidAppBuildCredentials(
-    $appId: String!,
-    $androidAppBuildCredentialsInput: AndroidAppBuildCredentialsInput!
-  ) {
-    androidAppBuildCredentials {
-      createAndroidAppBuildCredentials(
-        appId: $appId,
-        androidAppBuildCredentialsInput: $androidAppBuildCredentialsInput
-      ) {
-        id
-        name
-        isDefault
-      }
-    }
-  }`;
+
 
 function flattenKeystores(data: any): RemoteKeystore[] {
   const credentials = data?.app?.byId?.androidAppCredentials;
@@ -129,6 +115,73 @@ export async function fetchEasKeystore(
   return { storeFile, keyAlias: props.keyAlias };
 }
 
+const GET_APP_INFO_QUERY = `
+  query GetAppInfo($appId: String!) {
+    app { byId(appId: $appId) {
+      id
+      ownerAccount {
+        id
+      }
+      androidAppCredentials {
+        id
+        applicationIdentifier
+      }
+    } }
+  }`;
+
+const CREATE_APP_CREDENTIALS_MUTATION = `
+  mutation CreateAndroidAppCredentials($appId: ID!, $applicationIdentifier: String!) {
+    androidAppCredentials {
+      createAndroidAppCredentials(
+        appId: $appId,
+        applicationIdentifier: $applicationIdentifier,
+        androidAppCredentialsInput: {}
+      ) {
+        id
+        applicationIdentifier
+      }
+    }
+  }`;
+
+const CREATE_KEYSTORE_OBJECT_MUTATION = `
+  mutation CreateAndroidKeystore($accountId: ID!, $androidKeystoreInput: AndroidKeystoreInput!) {
+    androidKeystore {
+      createAndroidKeystore(
+        accountId: $accountId,
+        androidKeystoreInput: $androidKeystoreInput
+      ) {
+        id
+      }
+    }
+  }`;
+
+const CREATE_BUILD_CREDENTIALS_MUTATION = `
+  mutation CreateAndroidAppBuildCredentials(
+    $androidAppCredentialsId: ID!,
+    $androidAppBuildCredentialsInput: AndroidAppBuildCredentialsInput!
+  ) {
+    androidAppBuildCredentials {
+      createAndroidAppBuildCredentials(
+        androidAppCredentialsId: $androidAppCredentialsId,
+        androidAppBuildCredentialsInput: $androidAppBuildCredentialsInput
+      ) {
+        id
+        name
+        isDefault
+      }
+    }
+  }`;
+
+const SET_KEYSTORE_MUTATION = `
+  mutation SetKeystore($id: ID!, $keystoreId: ID!) {
+    androidAppBuildCredentials {
+      setKeystore(id: $id, keystoreId: $keystoreId) {
+        id
+        name
+      }
+    }
+  }`;
+
 export async function uploadLocalKeystoreToEas(
   cwd: string,
   projectId: string,
@@ -150,24 +203,95 @@ export async function uploadLocalKeystoreToEas(
   const base64Keystore = fileBytes.toString('base64');
   const type = props.storeFile.endsWith('.p12') || props.storeFile.endsWith('.pfx') ? 'PKCS12' : 'JKS';
 
-  const variables = {
-    appId: projectId,
-    androidAppBuildCredentialsInput: {
-      name: props.keyAlias || 'release',
-      androidKeystore: {
-        keystore: base64Keystore,
+  // 1. Fetch App Info (Owner Account & App Credentials)
+  const appInfoRes = await easGraphql<any>(GET_APP_INFO_QUERY, { appId: projectId }, auth);
+  const appData = appInfoRes?.app?.byId;
+  if (!appData || !appData.ownerAccount?.id) {
+    throw new Error(`Could not locate EAS project details for project ID "${projectId}".`);
+  }
+  const accountId = appData.ownerAccount.id;
+
+  // 2. Resolve or Create AndroidAppCredentials Container
+  const credsList = appData.androidAppCredentials || [];
+  const exp = readExpoConfig(cwd)?.config || {};
+  const pkg = exp.android?.package || 'com.example.app';
+  let matched = credsList.find((c: any) => c.applicationIdentifier === pkg);
+  let androidAppCredentialsId = matched?.id || credsList[0]?.id || null;
+
+  if (!androidAppCredentialsId) {
+    const createCredRes = await easGraphql<any>(
+      CREATE_APP_CREDENTIALS_MUTATION,
+      { appId: projectId, applicationIdentifier: pkg },
+      auth
+    );
+    androidAppCredentialsId = createCredRes?.androidAppCredentials?.createAndroidAppCredentials?.id || null;
+  }
+
+  if (!androidAppCredentialsId) {
+    throw new Error('Failed to resolve or create Android App Credentials container on EAS.');
+  }
+
+  // 3. Create the AndroidKeystore Object
+  const createKsRes = await easGraphql<any>(
+    CREATE_KEYSTORE_OBJECT_MUTATION,
+    {
+      accountId,
+      androidKeystoreInput: {
+        base64EncodedKeystore: base64Keystore,
         keystorePassword: props.storePassword,
         keyAlias: props.keyAlias,
         keyPassword: props.keyPassword || props.storePassword,
         type,
       },
     },
-  };
+    auth
+  );
 
-  const response = await easGraphql<any>(CREATE_KEYSTORE_MUTATION, variables, auth);
-  const created = response?.androidAppBuildCredentials?.createAndroidAppBuildCredentials;
-  if (!created || !created.id) {
-    throw new Error('EAS API did not return valid credentials confirmation after upload.');
+  const keystoreId = createKsRes?.androidKeystore?.createAndroidKeystore?.id;
+  if (!keystoreId) {
+    throw new Error('EAS API did not return a valid keystoreId after upload.');
   }
-  return { id: created.id, name: created.name || props.keyAlias };
+
+  // 4. Create Build Credentials binding keystoreId to app (or update if already exists)
+  const credentialName = props.keyAlias || 'release';
+  try {
+    const response = await easGraphql<any>(
+      CREATE_BUILD_CREDENTIALS_MUTATION,
+      {
+        androidAppCredentialsId,
+        androidAppBuildCredentialsInput: {
+          name: credentialName,
+          isDefault: true,
+          keystoreId,
+        },
+      },
+      auth
+    );
+    const created = response?.androidAppBuildCredentials?.createAndroidAppBuildCredentials;
+    if (created && created.id) {
+      return { id: created.id, name: created.name || credentialName };
+    }
+  } catch (err: any) {
+    if (
+      err?.code === 'CREDENTIALS_ANDROID_BUILD_CREDENTIALS_WITH_NAME_ALREADY_EXISTS_FOR_ANDROID_APP_CREDENTIALS' ||
+      /already exists/i.test(err?.message || '')
+    ) {
+      const listRes = await listEasKeystores(projectId, auth);
+      const existing = listRes.find((k: EasKeystoreSummary) => k.name === credentialName || k.keyAlias === credentialName) || listRes[0];
+      if (existing && existing.buildCredentialsId) {
+        const updateRes = await easGraphql<any>(
+          SET_KEYSTORE_MUTATION,
+          { id: existing.buildCredentialsId, keystoreId },
+          auth
+        );
+        const updated = updateRes?.androidAppBuildCredentials?.setKeystore;
+        if (updated && updated.id) {
+          return { id: updated.id, name: updated.name || credentialName };
+        }
+      }
+    }
+    throw err;
+  }
+
+  return { id: keystoreId, name: credentialName };
 }

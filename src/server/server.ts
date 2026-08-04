@@ -510,8 +510,9 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
               broadcastSse('build-complete', { success: true, artifact: result.artifact, kind: result.kind });
               serverLog(`Build complete: ${result.artifact}`);
             } catch (err: any) {
-              const aborted = err?.name === 'AbortError' || err?.isCanceled || /abort|cancel/i.test(err?.message || '');
-              broadcastSse('build-complete', { success: false, error: aborted ? 'Build stopped by user.' : (err?.message || String(err)) });
+              const aborted = buildAbort?.signal?.aborted === true || err?.name === 'AbortError';
+              const errorMsg = aborted ? 'Build stopped by user.' : (err?.message || String(err));
+              broadcastSse('build-complete', { success: false, error: errorMsg });
               serverLog(aborted ? 'Build stopped by user.' : `Build failed: ${err?.message || String(err)}`);
             } finally {
               activeBuild = null;

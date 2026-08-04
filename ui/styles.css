@@ -447,6 +447,23 @@ body {
   width: 100%;
 }
 
+/* Circular Loader Spinner */
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(238, 188, 1, 0.25);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Alerts */
 .alert {
   padding: 12px 16px;
@@ -501,6 +518,17 @@ body {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.log-welcome-box {
+  white-space: normal;
+  font-family: var(--font);
+  text-align: left;
+  line-height: 1.5;
+}
+
+.log-welcome-box code {
+  font-family: var(--font-mono);
 }
 
 .log-line {

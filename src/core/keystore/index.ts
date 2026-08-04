@@ -30,14 +30,12 @@ export async function ensureKeystore(
   forceProvider?: KeystoreProvider,
   opts: EnsureKeystoreOpts = {}
 ): Promise<void> {
-  if (!forceProvider) {
-    const existing = readKeystoreProps(cwd);
-    if (existing) {
-      log.ok(`keystore.properties already present (alias=${existing.keyAlias}) — skipping.`);
-      ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', 'credentials.json']);
-      writeCredentialsJson(cwd, existing);
-      return;
-    }
+  const existing = readKeystoreProps(cwd);
+  if (existing) {
+    log.ok(`keystore.properties already present (alias=${existing.keyAlias}).`);
+    ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', 'credentials.json']);
+    writeCredentialsJson(cwd, existing);
+    return;
   }
 
   const rehydrateAvailable = forceProvider === 'rehydrate' || !!findRehydrateCandidate(cwd);

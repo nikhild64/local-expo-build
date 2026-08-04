@@ -684,8 +684,11 @@ async function performDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
   // The browser UI uses Expo's GraphQL API directly, so its EAS actions do not
   // require the optional eas-cli executable to be installed.
   const canEasInit = easLink.kind !== 'linked' && easLink.kind !== 'no-expo-config';
-  const canEasConfigure = easLink.kind === 'linked' && !easLink.hasEasJson;
-  const rehydrateAvailable = !!findRehydrateCandidate(cwd);
+  const canEasConfigure = easLink.kind !== 'no-expo-config' && !easLink.hasEasJson;
+  const canSyncCredentialsJson = ksProps.fileExists && (!credResult.exists || !credResult.valid);
+  const rehydrateAvailable =
+    (!ksProps.fileExists || !ksProps.props || canSyncCredentialsJson) &&
+    (!!findRehydrateCandidate(cwd) || canSyncCredentialsJson);
   const canSetupKeystore = !ksProps.fileExists || !ksProps.props;
   const easReady = isEasReady(easLink);
 
