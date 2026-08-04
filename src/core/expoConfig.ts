@@ -31,21 +31,7 @@ const cache = new Map<string, ExpoConfigResult | null>();
 export function readExpoConfig(cwd: string): ExpoConfigResult | null {
   if (cache.has(cwd)) return cache.get(cwd) ?? null;
 
-  const hasDynamic =
-    fs.existsSync(path.join(cwd, 'app.config.js')) ||
-    fs.existsSync(path.join(cwd, 'app.config.ts')) ||
-    fs.existsSync(path.join(cwd, 'app.config.cjs')) ||
-    fs.existsSync(path.join(cwd, 'app.config.mjs'));
-
-  if (hasDynamic) {
-    const fromDynamic = readDynamicConfig(cwd);
-    if (fromDynamic) {
-      cache.set(cwd, fromDynamic);
-      return fromDynamic;
-    }
-    // Fall through to app.json (some projects keep both; dynamic just augments).
-  }
-
+  // Fast path: if app.json exists, read it directly without spawning external CLI processes
   const appJsonPath = path.join(cwd, 'app.json');
   if (fs.existsSync(appJsonPath)) {
     try {
@@ -58,6 +44,20 @@ export function readExpoConfig(cwd: string): ExpoConfigResult | null {
       }
     } catch {
       // malformed app.json — fall through
+    }
+  }
+
+  const hasDynamic =
+    fs.existsSync(path.join(cwd, 'app.config.js')) ||
+    fs.existsSync(path.join(cwd, 'app.config.ts')) ||
+    fs.existsSync(path.join(cwd, 'app.config.cjs')) ||
+    fs.existsSync(path.join(cwd, 'app.config.mjs'));
+
+  if (hasDynamic) {
+    const fromDynamic = readDynamicConfig(cwd);
+    if (fromDynamic) {
+      cache.set(cwd, fromDynamic);
+      return fromDynamic;
     }
   }
 
@@ -84,7 +84,7 @@ function readDynamicConfig(cwd: string): ExpoConfigResult | null {
     const result = execaSync(command, args, {
       cwd,
       reject: false,
-      timeout: 30_000,
+      timeout: 3_000,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...execaOpts,
     });

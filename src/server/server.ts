@@ -19,7 +19,7 @@ import { readExpoConfig } from '../core/expoConfig';
 import { EasApiError, EasAuth, resolveEasAuth } from '../core/eas/api';
 import { EAS_PROJECT_NAME, createProject, getEasViewer, listProjects, writeProjectIdToAppJson } from '../core/eas/link';
 import { configureEasProject } from '../core/eas/configure';
-import { fetchEasKeystore, listEasKeystores } from '../core/keystore/easApiFetch';
+import { fetchEasKeystore, listEasKeystores, uploadLocalKeystoreToEas } from '../core/keystore/easApiFetch';
 import { compareScripts, readPackageScripts, scaffoldProject } from '../core/scaffoldScripts';
 
 export interface UiServerOpts {
@@ -258,6 +258,16 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           const result = await withEasOperation(() => fetchEasKeystore(cwd, link.projectId, body.buildCredentialsId, body.overwrite === true, currentEasAuth()));
           broadcastSse('keystore-updated', {});
           serverLog(`Fetched EAS keystore (${result.storeFile}, alias=${result.keyAlias})`);
+          res.writeHead(200); res.end(JSON.stringify({ success: true, ...result })); return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/eas/keystores/upload') {
+          serverLog('Uploading local Android keystore to EAS');
+          const link = detectEasLink(cwd);
+          if (link.kind !== 'linked') { res.writeHead(409); res.end(JSON.stringify({ error: 'This project is not linked to EAS. Link an EAS project first.' })); return; }
+          const result = await withEasOperation(() => uploadLocalKeystoreToEas(cwd, link.projectId, currentEasAuth()));
+          broadcastSse('keystore-updated', {});
+          serverLog(`Uploaded local keystore to EAS (${result.name})`);
           res.writeHead(200); res.end(JSON.stringify({ success: true, ...result })); return;
         }
 

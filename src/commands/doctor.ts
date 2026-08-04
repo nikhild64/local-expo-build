@@ -45,7 +45,7 @@ function replaceResultByName(results: CheckResult[], name: string, newRow: Check
 
 async function which(cmd: string, args: string[] = ['-version']): Promise<string | null> {
   try {
-    const { stdout, stderr } = await execa(cmd, args, { reject: false, timeout: 10_000 });
+    const { stdout, stderr } = await execa(cmd, args, { reject: false, timeout: 3_000 });
     return (stdout || stderr || '').split('\n')[0]?.trim() || cmd;
   } catch {
     return null;
@@ -60,7 +60,7 @@ async function projectBinVersion(name: string, cwd: string): Promise<string | nu
     const { stdout, stderr } = await execa(command, args, {
       cwd,
       reject: false,
-      timeout: 10_000,
+      timeout: 3_000,
       ...execaOpts,
     });
     return (stdout || stderr || '').split('\n')[0]?.trim() || name;
@@ -514,10 +514,16 @@ export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSumma
     detail: `v${process.versions.node}`,
   });
 
-  const java = await which('java', ['-version']);
-  results.push({ name: 'JDK (java)', ok: !!java, detail: java || 'not found' });
+  const [java, keytool, eas, expoBin, xcb, xcrun] = await Promise.all([
+    which('java', ['-version']),
+    which('keytool', ['-help']),
+    which('eas', ['--version']),
+    projectBinVersion('expo', cwd),
+    process.platform === 'darwin' ? which('xcodebuild', ['-version']) : Promise.resolve(null),
+    process.platform === 'darwin' ? which('xcrun', ['--version']) : Promise.resolve(null),
+  ]);
 
-  const keytool = await which('keytool', ['-help']);
+  results.push({ name: 'JDK (java)', ok: !!java, detail: java || 'not found' });
   results.push({ name: 'keytool', ok: !!keytool, detail: keytool ? 'present' : 'not found' });
 
   const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
@@ -543,7 +549,6 @@ export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSumma
     });
   }
 
-  const eas = await which('eas', ['--version']);
   results.push({
     name: 'eas-cli',
     ok: !!eas,
@@ -552,14 +557,12 @@ export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSumma
   });
 
   if (process.platform === 'darwin') {
-    const xcb = await which('xcodebuild', ['-version']);
     results.push({
       name: 'xcodebuild (iOS, optional)',
       ok: !!xcb,
       detail: xcb || 'not found (install Xcode from the App Store)',
       warn: !xcb,
     });
-    const xcrun = await which('xcrun', ['--version']);
     results.push({
       name: 'xcrun (iOS, optional)',
       ok: !!xcrun,
@@ -575,7 +578,6 @@ export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSumma
     });
   }
 
-  const expoBin = await projectBinVersion('expo', cwd);
   results.push({
     name: 'expo CLI (in project)',
     ok: !!expoBin,

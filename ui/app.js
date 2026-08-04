@@ -49,6 +49,8 @@
   const formKsGenerate = document.getElementById('form-ks-generate');
   const btnTriggerRehydrate = document.getElementById('btn-trigger-rehydrate');
   const btnTriggerEasFetch = document.getElementById('btn-trigger-eas-fetch');
+  const btnTriggerEasAuto = document.getElementById('btn-trigger-eas-auto-gen');
+  const btnTriggerEasUploadLocal = document.getElementById('btn-trigger-eas-upload-local');
   const easKeystoreStatus = document.getElementById('eas-keystore-status');
   const easKeystoreList = document.getElementById('eas-keystore-list');
   const scaffoldStatus = document.getElementById('scaffold-status');
@@ -809,6 +811,8 @@
     });
 
     btnTriggerEasFetch.addEventListener('click', fetchEasKeystore);
+    if (btnTriggerEasAuto) btnTriggerEasAuto.addEventListener('click', generateKeystoreAuto);
+    if (btnTriggerEasUploadLocal) btnTriggerEasUploadLocal.addEventListener('click', uploadLocalKeystoreToEasUI);
   }
 
   async function apiRequest(url, options = {}, retryAuth = true) {
@@ -936,10 +940,24 @@
   }
 
   async function configureEas() {
-    const { res, data } = await apiRequest('/api/eas/configure', { method: 'POST' });
-    if (!res.ok) return showAlert('Could not create eas.json', data.error || 'Please try again.', 'error');
-    await showAlert('EAS configured', data.created ? 'EAS CLI generated eas.json for Android.' : 'eas.json already exists and was left unchanged.', 'success');
-    fetchDoctor();
+    const originalText = btnEasConfigure ? btnEasConfigure.textContent : '';
+    if (btnEasConfigure) {
+      btnEasConfigure.disabled = true;
+      btnEasConfigure.textContent = 'Creating eas.json...';
+    }
+    try {
+      const { res, data } = await apiRequest('/api/eas/configure', { method: 'POST' });
+      if (!res.ok) return showAlert('Could not create eas.json', data.error || 'Please try again.', 'error');
+      await showAlert('EAS configured', data.created ? 'Generated eas.json for Android successfully.' : 'eas.json already exists and was left unchanged.', 'success');
+      fetchDoctor();
+    } catch (err) {
+      await showAlert('Could not create eas.json', err?.message || 'An error occurred.', 'error');
+    } finally {
+      if (btnEasConfigure) {
+        btnEasConfigure.disabled = false;
+        btnEasConfigure.textContent = originalText;
+      }
+    }
   }
 
   async function fetchEasKeystores() {
@@ -967,6 +985,15 @@
 
   async function fetchEasKeystore() {
     if (!easKeystores.length) await fetchEasKeystores();
+    if (!easKeystores.length) {
+      return showAlert(
+        'No Keystores Found on EAS',
+        'No Android keystores exist on your EAS project yet.\n\n' +
+        '• To generate a new keystore on EAS directly: Run `eas credentials` in terminal and select "Set up build credentials / Create a new Android keystore".\n\n' +
+        '• To generate a local keystore instantly: Click the "Generate Keystore" tab above.',
+        'info'
+      );
+    }
     const selection = document.querySelector('input[name="eas-keystore"]:checked');
     if (!selection) return showAlert('No EAS keystore selected', 'Choose a keystore to fetch first.', 'error');
     const fetchStore = async (overwrite) => apiRequest('/api/keystore/fetch-eas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ buildCredentialsId: selection.value, overwrite }) });
@@ -979,6 +1006,100 @@
     if (!result.res.ok) return showAlert('Could not fetch keystore', result.data.error || 'Please try again.', 'error');
     await showAlert('Keystore fetched', `Saved ${result.data.storeFile} with alias ${result.data.keyAlias}.`, 'success');
     fetchKeystoreStatus(); fetchDoctor();
+  }
+
+  async function generateKeystoreAuto() {
+    const originalText = btnTriggerEasAuto ? btnTriggerEasAuto.textContent : '';
+    if (btnTriggerEasAuto) {
+      btnTriggerEasAuto.disabled = true;
+      btnTriggerEasAuto.textContent = 'Generating...';
+    }
+    try {
+      const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
+      const { res, data } = await apiRequest('/api/keystore/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'generate',
+          params: {
+            filename: 'release.jks',
+            keyAlias: 'release',
+            storePassword: pass,
+            keyPassword: pass,
+            cn: 'Release Signer',
+            org: 'LocalExpoBuild',
+            country: 'US',
+          },
+        }),
+      });
+      if (!res.ok) {
+        return showAlert('Could not generate keystore', data.error || 'Keytool generation failed.', 'error');
+      }
+
+      let easSynced = false;
+      let easSyncError = '';
+      try {
+        const uploadResult = await apiRequest('/api/eas/keystores/upload', { method: 'POST' });
+        if (uploadResult.res.ok) {
+          easSynced = true;
+        } else {
+          easSyncError = uploadResult.data.error || 'Could not sync to EAS.';
+        }
+      } catch (err) {
+        easSyncError = err?.message || 'EAS sync failed.';
+      }
+
+      const syncMsg = easSynced
+        ? '✓ Uploaded & Synced directly to Expo EAS Cloud!'
+        : `(Saved locally & to credentials.json. Note for EAS: ${easSyncError})`;
+
+      await showAlert(
+        'Keystore Created & Configured!',
+        `Generated a new release keystore (release.jks) with alias "release".\n\n` +
+          `• Saved locally to android/app/release.jks\n` +
+          `• Configured in keystore.properties\n` +
+          `• Synced with credentials.json\n` +
+          `• ${syncMsg}`,
+        'success'
+      );
+      fetchKeystoreStatus();
+      fetchDoctor();
+      fetchEasKeystores();
+    } catch (err) {
+      await showAlert('Error', err?.message || 'An error occurred.', 'error');
+    } finally {
+      if (btnTriggerEasAuto) {
+        btnTriggerEasAuto.disabled = false;
+        btnTriggerEasAuto.textContent = originalText;
+      }
+    }
+  }
+
+  async function uploadLocalKeystoreToEasUI() {
+    const originalText = btnTriggerEasUploadLocal ? btnTriggerEasUploadLocal.textContent : '';
+    if (btnTriggerEasUploadLocal) {
+      btnTriggerEasUploadLocal.disabled = true;
+      btnTriggerEasUploadLocal.textContent = 'Syncing...';
+    }
+    try {
+      const { res, data } = await apiRequest('/api/eas/keystores/upload', { method: 'POST' });
+      if (!res.ok) {
+        return showAlert('Could not sync to EAS', data.error || 'Upload to EAS failed.', 'error');
+      }
+      await showAlert(
+        'Synced to EAS Cloud!',
+        `Successfully uploaded your local keystore to your linked EAS project.`,
+        'success'
+      );
+      fetchEasKeystores();
+    } catch (err) {
+      await showAlert('Error', err?.message || 'An error occurred.', 'error');
+    } finally {
+      if (btnTriggerEasUploadLocal) {
+        btnTriggerEasUploadLocal.disabled = false;
+        btnTriggerEasUploadLocal.textContent = originalText;
+      }
+    }
   }
 
   function updateSelectedFileName() {

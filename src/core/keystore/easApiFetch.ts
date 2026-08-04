@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { EasAuth, easGraphql } from '../eas/api';
 import { ensureGitignoreEntries } from '../../util/gitignore';
-import { KeystoreProps, writeKeystoreProps } from '../setupSigning';
+import { KeystoreProps, readKeystoreProps, writeKeystoreProps } from '../setupSigning';
 import { writeCredentialsJson } from '../writeCredentialsJson';
 
 export interface EasKeystoreSummary {
@@ -34,6 +34,23 @@ const KEYSTORES_QUERY = `
         }
       }
     } }
+  }`;
+
+const CREATE_KEYSTORE_MUTATION = `
+  mutation CreateAndroidAppBuildCredentials(
+    $appId: String!,
+    $androidAppBuildCredentialsInput: AndroidAppBuildCredentialsInput!
+  ) {
+    androidAppBuildCredentials {
+      createAndroidAppBuildCredentials(
+        appId: $appId,
+        androidAppBuildCredentialsInput: $androidAppBuildCredentialsInput
+      ) {
+        id
+        name
+        isDefault
+      }
+    }
   }`;
 
 function flattenKeystores(data: any): RemoteKeystore[] {
@@ -110,4 +127,47 @@ export async function fetchEasKeystore(
   writeKeystoreProps(cwd, props);
   writeCredentialsJson(cwd, props);
   return { storeFile, keyAlias: props.keyAlias };
+}
+
+export async function uploadLocalKeystoreToEas(
+  cwd: string,
+  projectId: string,
+  auth?: EasAuth | null
+): Promise<{ id: string; name: string }> {
+  if (!projectId) throw new Error('This project is not linked to EAS. Link an EAS project first.');
+  const props = readKeystoreProps(cwd);
+  if (!props) throw new Error('No local keystore configuration (keystore.properties) found to upload.');
+
+  const candidatePaths = [
+    path.join(cwd, 'android', 'app', props.storeFile),
+    path.join(cwd, props.storeFile),
+    path.join(cwd, 'credentials', 'android', props.storeFile),
+  ];
+  const jksPath = candidatePaths.find((p) => fs.existsSync(p) && fs.statSync(p).size > 0);
+  if (!jksPath) throw new Error(`Keystore file "${props.storeFile}" was not found on disk.`);
+
+  const fileBytes = fs.readFileSync(jksPath);
+  const base64Keystore = fileBytes.toString('base64');
+  const type = props.storeFile.endsWith('.p12') || props.storeFile.endsWith('.pfx') ? 'PKCS12' : 'JKS';
+
+  const variables = {
+    appId: projectId,
+    androidAppBuildCredentialsInput: {
+      name: props.keyAlias || 'release',
+      androidKeystore: {
+        keystore: base64Keystore,
+        keystorePassword: props.storePassword,
+        keyAlias: props.keyAlias,
+        keyPassword: props.keyPassword || props.storePassword,
+        type,
+      },
+    },
+  };
+
+  const response = await easGraphql<any>(CREATE_KEYSTORE_MUTATION, variables, auth);
+  const created = response?.androidAppBuildCredentials?.createAndroidAppBuildCredentials;
+  if (!created || !created.id) {
+    throw new Error('EAS API did not return valid credentials confirmation after upload.');
+  }
+  return { id: created.id, name: created.name || props.keyAlias };
 }

@@ -91,6 +91,9 @@
                   <input type="checkbox" id="opt-debug">
                   <span>Debug build (debug keystore — no EAS, no version bump, no signing setup)</span>
                 </label>
+                <div class="form-hint" style="margin-top: 8px; padding: 10px 12px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+                  💡 <strong>No signing key ready?</strong> Check <em>Debug build</em> to build an APK instantly using Android's auto-generated debug key without needing release credentials.
+                </div>
               </div>
 
               <div id="build-error-banner" class="alert danger" style="display: none;"></div>
@@ -113,6 +116,10 @@
               <div class="log-actions">
                 <button type="button" id="btn-clear-log" class="btn btn-ghost btn-sm">Clear</button>
               </div>
+            </div>
+
+            <div class="alert info margin-bottom" style="font-size: 12px; line-height: 1.4; padding: 10px 14px; margin-bottom: 12px;">
+              ⏱ <strong>Build Duration Note:</strong> If running for the first time, Gradle downloads Android SDK dependencies which can take 5–10 minutes. Subsequent reruns reuse cached layers and build significantly faster!
             </div>
 
             <div id="artifact-result" class="alert ok artifact-banner" style="display: none;">
@@ -310,7 +317,11 @@
             <div class="eas-fetch-box">
               <p id="eas-keystore-status">Select an Android keystore stored with the linked EAS project. Credentials are fetched directly and written locally.</p>
               <div id="eas-keystore-list" class="remote-list" aria-live="polite"></div>
-              <button type="button" id="btn-trigger-eas-fetch" class="btn btn-primary margin-top">Fetch Keystore from EAS</button>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;" class="margin-top">
+                <button type="button" id="btn-trigger-eas-fetch" class="btn btn-primary">Fetch Keystore from EAS</button>
+                <button type="button" id="btn-trigger-eas-auto-gen" class="btn btn-secondary">Generate New Keystore</button>
+                <button type="button" id="btn-trigger-eas-upload-local" class="btn btn-secondary">Sync Local Keystore to EAS</button>
+              </div>
             </div>
           </div>
 
