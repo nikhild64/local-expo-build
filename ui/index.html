@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>local-expo-build — Local Android Build & Keystore Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- App Header -->
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-badge">⚡ LOCAL</span>
+        <h1 class="brand-title">local-expo-build</h1>
+      </div>
+      <div class="header-status">
+        <div id="status-pill" class="status-pill idle">
+          <span class="dot"></span>
+          <span id="status-text">Idle</span>
+        </div>
+        <div id="dry-run-badge" class="badge warn" style="display: none;">DRY RUN</div>
+        <div class="host-info" id="host-info">127.0.0.1:3847</div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="build">
+        <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        Build Android
+      </button>
+      <button class="tab-btn" data-tab="doctor">
+        <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+        Doctor
+      </button>
+      <button class="tab-btn" data-tab="keystore">
+        <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v2h2v-2h2v-2h-8.35zM7 15c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/></svg>
+        Keystore
+      </button>
+    </nav>
+
+    <!-- Main Content Panels -->
+    <main class="main-content">
+      <!-- ── BUILD TAB ── -->
+      <section id="panel-build" class="tab-panel active">
+        <div class="panel-grid">
+          <!-- Build Form -->
+          <div class="card form-card">
+            <h2 class="card-title">Android Build Settings</h2>
+            <form id="build-form">
+              <div class="form-group">
+                <label class="form-label">Artifact Format</label>
+                <div class="pill-selector">
+                  <button type="button" class="pill-opt active" id="btn-aab" data-val="aab">AAB (bundleRelease)</button>
+                  <button type="button" class="pill-opt" id="btn-apk" data-val="apk">APK (assembleRelease)</button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="build-profile">EAS Profile</label>
+                <input type="text" id="build-profile" class="form-input" value="production" placeholder="production">
+                <span class="form-hint">Used for fetching next versionCode from EAS</span>
+              </div>
+
+              <div class="form-group checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="opt-clean">
+                  <span>Clean <code>android/</code> before prebuild (<code>--clean</code>)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="opt-no-bump">
+                  <span>Skip version bump (<code>--no-bump</code>)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="opt-no-sync">
+                  <span>Skip EAS versionCode sync (<code>--no-sync</code>)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="opt-no-prebuild">
+                  <span>Skip expo prebuild (<code>--no-prebuild</code>)</span>
+                </label>
+              </div>
+
+              <div id="build-error-banner" class="alert danger" style="display: none;"></div>
+
+              <button type="submit" id="btn-start-build" class="btn btn-primary btn-lg full-width">
+                <span class="btn-text">Start Local Build</span>
+                <span class="btn-spinner" style="display: none;"></span>
+              </button>
+            </form>
+          </div>
+
+          <!-- Build Output & Logs -->
+          <div class="card log-card">
+            <div class="card-header">
+              <h2 class="card-title">Build Log Output</h2>
+              <div class="log-actions">
+                <button type="button" id="btn-clear-log" class="btn btn-ghost btn-sm">Clear</button>
+              </div>
+            </div>
+
+            <div id="artifact-result" class="alert ok artifact-banner" style="display: none;">
+              <div class="artifact-info">
+                <strong>Build Artifact Ready:</strong>
+                <code id="artifact-path"></code>
+              </div>
+            </div>
+
+            <div id="log-console" class="log-console">
+              <div class="log-line dim">Waiting for build initialization...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── DOCTOR TAB ── -->
+      <section id="panel-doctor" class="tab-panel">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Environment Doctor</h2>
+              <p class="card-sub">Verifies JDK, keytool, ANDROID_HOME, EAS CLI, Expo SDK, and signing configurations.</p>
+            </div>
+            <button id="btn-refresh-doctor" class="btn btn-secondary btn-sm">
+              Refresh Doctor
+            </button>
+          </div>
+
+          <div id="doctor-summary-banner" class="alert info margin-bottom">
+            Checking local environment...
+          </div>
+
+          <div id="doctor-actions-bar" class="actions-bar" style="display: none;">
+            <button id="btn-fix-pkg" class="btn btn-secondary btn-sm" style="display: none;">Fix Package Name</button>
+            <button id="btn-eas-init" class="btn btn-secondary btn-sm" style="display: none;">Run `eas init`</button>
+            <button id="btn-eas-configure" class="btn btn-secondary btn-sm" style="display: none;">Run `eas build:configure`</button>
+            <button id="btn-doctor-rehydrate" class="btn btn-secondary btn-sm" style="display: none;">Rehydrate Keystore</button>
+          </div>
+
+          <div id="doctor-grid" class="doctor-grid">
+            <div class="dim">Loading environment checks...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── KEYSTORE TAB ── -->
+      <section id="panel-keystore" class="tab-panel">
+        <div class="card margin-bottom">
+          <h2 class="card-title">Keystore Status</h2>
+          <div id="keystore-status-content" class="status-content">
+            <div class="dim">Loading keystore status...</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Keystore Management Wizard</h2>
+          
+          <div class="subtab-nav">
+            <button class="subtab-btn active" data-subtab="ks-upload">Upload .jks File</button>
+            <button class="subtab-btn" data-subtab="ks-import">Import Local Path</button>
+            <button class="subtab-btn" data-subtab="ks-generate">Generate New</button>
+            <button class="subtab-btn" data-subtab="ks-rehydrate">Rehydrate</button>
+            <button class="subtab-btn" data-subtab="ks-eas">Fetch from EAS</button>
+          </div>
+
+          <!-- Upload Subtab -->
+          <div id="subpanel-ks-upload" class="subpanel active">
+            <form id="form-ks-upload" class="wizard-form">
+              <div class="drop-zone" id="jks-drop-zone">
+                <input type="file" id="input-jks-file" accept=".jks,.keystore" style="display: none;">
+                <svg viewBox="0 0 24 24" width="36" height="36"><path fill="currentColor" d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+                <div class="drop-title">Drag & drop your <code>.jks</code> file here</div>
+                <div class="drop-sub">or click to browse from disk</div>
+                <div id="selected-file-name" class="selected-file"></div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="upload-alias">Key Alias (optional if match in credentials.json)</label>
+                  <input type="text" id="upload-alias" class="form-input" placeholder="e.g. release">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="upload-store-pass">Keystore Password</label>
+                  <input type="password" id="upload-store-pass" class="form-input" placeholder="••••••••">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="upload-key-pass">Key Password</label>
+                  <input type="password" id="upload-key-pass" class="form-input" placeholder="Leave blank if same as store password">
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary">Upload & Register Keystore</button>
+            </form>
+          </div>
+
+          <!-- Import Subtab -->
+          <div id="subpanel-ks-import" class="subpanel">
+            <form id="form-ks-import" class="wizard-form">
+              <div class="form-group">
+                <label class="form-label" for="import-path">Path to .jks file on disk</label>
+                <input type="text" id="import-path" class="form-input" placeholder="e.g. C:\keys\my-release-key.jks or ./my-release-key.jks">
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="import-alias">Key Alias</label>
+                  <input type="text" id="import-alias" class="form-input" placeholder="release">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="import-store-pass">Keystore Password</label>
+                  <input type="password" id="import-store-pass" class="form-input">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="import-key-pass">Key Password</label>
+                  <input type="password" id="import-key-pass" class="form-input">
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary">Import Keystore</button>
+            </form>
+          </div>
+
+          <!-- Generate Subtab -->
+          <div id="subpanel-ks-generate" class="subpanel">
+            <form id="form-ks-generate" class="wizard-form">
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="gen-filename">Keystore Filename</label>
+                  <input type="text" id="gen-filename" class="form-input" value="release.jks">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="gen-alias">Key Alias</label>
+                  <input type="text" id="gen-alias" class="form-input" value="release">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="gen-store-pass">Keystore Password (min 6 chars)</label>
+                  <input type="password" id="gen-store-pass" class="form-input" required minlength="6">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="gen-key-pass">Key Password</label>
+                  <input type="password" id="gen-key-pass" class="form-input" placeholder="Same as store password">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="gen-cn">Your Name (CN)</label>
+                  <input type="text" id="gen-cn" class="form-input" value="Release Signer">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="gen-org">Organization (O)</label>
+                  <input type="text" id="gen-org" class="form-input" value="Unknown">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="gen-country">Country Code (C)</label>
+                  <input type="text" id="gen-country" class="form-input" value="US" maxlength="2">
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary">Generate Keystore via keytool</button>
+            </form>
+          </div>
+
+          <!-- Rehydrate Subtab -->
+          <div id="subpanel-ks-rehydrate" class="subpanel">
+            <div id="rehydrate-info" class="rehydrate-box">
+              <p>Rehydrate binds your <code>credentials.json</code> and referenced <code>.jks</code> file into <code>keystore.properties</code> without password re-entry.</p>
+              <button type="button" id="btn-trigger-rehydrate" class="btn btn-primary margin-top">Perform Rehydration</button>
+            </div>
+          </div>
+
+          <!-- EAS Subtab -->
+          <div id="subpanel-ks-eas" class="subpanel">
+            <div class="eas-fetch-box">
+              <p>Fetch Android credentials directly from Expo Application Services (EAS). Launches <code>eas credentials</code> in the embedded web terminal dock below.</p>
+              <button type="button" id="btn-trigger-eas-fetch" class="btn btn-primary margin-top">Launch `eas credentials` in Web Terminal</button>
+            </div>
+          </div>
+
+        </div>
+      </section>
+    </main>
+
+    <!-- ── EMBEDDED TERMINAL DOCK ── -->
+    <div id="terminal-dock" class="terminal-dock collapsed">
+      <div class="dock-header">
+        <div class="dock-title">
+          <span class="dock-dot"></span>
+          <span>Web Terminal Dock (allowlisted <code>eas</code> subcommands)</span>
+          <span id="pty-status-text" class="pty-status-text">Disconnected</span>
+        </div>
+        <div class="dock-actions">
+          <button id="btn-dock-clear" class="btn btn-ghost btn-xs">Clear</button>
+          <button id="btn-dock-toggle" class="btn btn-ghost btn-xs">Expand Terminal</button>
+        </div>
+      </div>
+      <div class="dock-body">
+        <div id="terminal-container"></div>
+      </div>
+    </div>
+  <!-- Custom Modal Overlay -->
+  <div id="custom-modal-overlay" class="modal-overlay" style="display: none;">
+    <div class="modal-card" id="modal-card">
+      <div class="modal-header">
+        <div class="modal-icon-badge" id="modal-icon-badge">✓</div>
+        <h3 class="modal-title" id="modal-title">Dialog Title</h3>
+      </div>
+      <div class="modal-body">
+        <p id="modal-message" class="modal-message"></p>
+        <div id="modal-input-container" class="form-group margin-top" style="display: none;">
+          <input type="text" id="modal-input-field" class="form-input" placeholder="">
+          <div id="modal-input-error" class="form-hint err" style="display: none;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="modal-btn-cancel" class="btn btn-ghost">Cancel</button>
+        <button type="button" id="modal-btn-confirm" class="btn btn-primary">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/xterm-addon-fit.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

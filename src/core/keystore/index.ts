@@ -1,12 +1,22 @@
 import { select } from '@inquirer/prompts';
 import { readKeystoreProps } from '../setupSigning';
 import { writeCredentialsJson } from '../writeCredentialsJson';
-import { importExistingKeystore } from './existing';
-import { generateKeystore } from './generate';
+import { importExistingKeystore, ImportKeystoreParams } from './existing';
+import { generateKeystore, GenerateKeystoreParams } from './generate';
 import { fetchKeystoreFromEas } from './easFetch';
 import { findRehydrateCandidate, rehydrateFromCredentialsJson, RehydrateOpts } from './rehydrate';
 import { ensureGitignoreEntries } from '../../util/gitignore';
 import { log } from '../../util/log';
+
+export {
+  generateKeystore,
+  GenerateKeystoreParams,
+  importExistingKeystore,
+  ImportKeystoreParams,
+  rehydrateFromCredentialsJson,
+  findRehydrateCandidate,
+  fetchKeystoreFromEas,
+};
 
 export type KeystoreProvider = 'existing' | 'generate' | 'eas' | 'rehydrate';
 

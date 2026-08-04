@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Local Browser UI (`npx local-expo-build ui`).** Interactive local web interface running at `http://127.0.0.1:3847` (localhost only) for Android builds (APK/AAB), Doctor environment checks & auto-fixes, Keystore management, multipart `.jks` uploads, and allowlisted interactive `eas` subcommands in an embedded web terminal dock (xterm.js + WS PTY).
+- **Multipart `.jks` Uploads.** Direct `.jks` keystore file uploads via busboy multipart parser in the web interface.
+- **Embedded Web Terminal Dock.** Interactive xterm.js PTY shell supporting allowlisted `eas` subcommands (`eas init`, `eas build:configure`, `eas credentials`).
+- **Non-interactive Keystore & Build Core APIs.** Extracted `runAndroidBuild`, `collectDoctorChecks`, and param-driven keystore setup functions (`generateKeystore`, `importExistingKeystore`, `rehydrateFromCredentialsJson`).
+
 ## [0.4.3] — 2026-06-30
 
 ### Added

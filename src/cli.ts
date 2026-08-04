@@ -5,6 +5,7 @@ import { registerInitCommand } from './commands/init';
 import { registerKeystoreCommand } from './commands/keystore';
 import { registerDoctorCommand } from './commands/doctor';
 import { registerUpdateCommand } from './commands/update';
+import { registerUiCommand } from './commands/ui';
 import { maybePromptCliUpdate } from './util/checkCliUpdate';
 
 const pkg = require('../package.json');
@@ -42,6 +43,7 @@ registerInitCommand(program);
 registerKeystoreCommand(program);
 registerDoctorCommand(program);
 registerUpdateCommand(program);
+registerUiCommand(program);
 
 program.hook('preAction', async (thisCommand, actionCommand) => {
   const argv = process.argv;

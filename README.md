@@ -81,6 +81,12 @@ local-expo-build doctor                     Env check + interactive auto-fix wiz
                                             (eas init → eas build:configure →
                                              keystore setup)
 
+# ── Local Web UI ──
+local-expo-build ui [--port <n>] [--no-open]
+                                            Launch local browser UI (localhost only)
+                                            for Android builds, Doctor, Keystore,
+                                            multipart upload, and embedded PTY.
+
 # ── Android (stable) ──
 local-expo-build build android [--apk|--aab] [--profile <name>]
                                [--clean] [--no-bump] [--no-sync] [--no-prebuild]
@@ -107,6 +113,22 @@ local-expo-build build ios [--method <m>] [--scheme <s>] [--configuration <c>]
 local-expo-build update-scripts [-y|--yes]
                                             Refresh scaffolded scripts/*.js to the
                                             version bundled with this CLI.
+```
+
+## Local Browser UI (`npx local-expo-build ui`)
+
+Launch a lightweight local web interface running on your machine:
+
+```bash
+npx local-expo-build ui [--port 3847] [--no-open]
+```
+
+- **Security Boundary**: Binds strictly to `127.0.0.1` (localhost only).
+- **Chai Visual Theme**: Dark canvas (`#14100c`), warm accent (`#f0824e`), Nunito + JetBrains Mono typography.
+- **Build Tab**: Trigger APK/AAB builds, configure flags (`--clean`, `--no-bump`, `--no-sync`), and view live streaming build logs via SSE.
+- **Doctor Tab**: View environment diagnostics cards and trigger 1-click fixes (package name, `eas init`, `eas build:configure`, keystore rehydration).
+- **Keystore Wizard & Upload**: Upload `.jks` files directly via multipart drag-and-drop, import paths, generate new keypairs via `keytool`, or rehydrate from `credentials.json`.
+- **Embedded Web Terminal**: Interactive `eas` CLI commands in your browser powered by xterm.js and WebSocket PTY. Allowlisted to `eas init`, `eas build:configure`, and `eas credentials` for security. Falling back to host terminal if `@lydell/node-pty` native binaries are missing.
 ```
 
 Global flags: `--cwd <path>`, `--verbose`, `--dry-run`.

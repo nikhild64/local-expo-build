@@ -11,13 +11,13 @@ import { maybePromptScriptUpdate } from '../util/maybePromptScriptUpdate';
 import { compareScripts } from '../core/scaffoldScripts';
 import { detectExpoSdk } from '../core/sdkDetect';
 import { GRADLE_PIN } from '../core/pinGradle';
-import { detectEasLink, EasLinkResult } from '../core/easLink';
+import { detectEasLink, isEasReady, EasLinkResult } from '../core/easLink';
 import { readKeystoreProps, KeystoreProps } from '../core/setupSigning';
 import { ensureKeystore } from '../core/keystore';
 import { findRehydrateCandidate } from '../core/keystore/rehydrate';
 import { readExpoConfig, invalidateExpoConfigCache } from '../core/expoConfig';
 
-type CheckResult = { name: string; ok: boolean; detail?: string; warn?: boolean };
+export type CheckResult = { name: string; ok: boolean; detail?: string; warn?: boolean };
 
 interface KeystorePropsCheck {
   result: CheckResult;
@@ -460,6 +460,189 @@ function buildSuggestions({ androidPkg, easLink, ks, jks, cred }: SuggestionCtx)
   }
 
   return out;
+}
+
+export interface DoctorCapabilities {
+  canFixAndroidPackage: boolean;
+  canEasInit: boolean;
+  canEasConfigure: boolean;
+  rehydrateAvailable: boolean;
+  canSetupKeystore: boolean;
+  easReady: boolean;
+}
+
+export interface DoctorCheckSummary {
+  results: CheckResult[];
+  capabilities: DoctorCapabilities;
+}
+
+export function setAndroidPackage(cwd: string, packageName: string): void {
+  const pkg = packageName.trim();
+  if (!ANDROID_PKG_RE.test(pkg)) {
+    throw new Error(
+      `"${pkg}" is not a valid Android applicationId (need at least two dot-separated segments)`
+    );
+  }
+  const appJsonPath = path.join(cwd, 'app.json');
+  if (!fs.existsSync(appJsonPath)) {
+    throw new Error(`app.json not found at ${appJsonPath}`);
+  }
+  let appJson: any;
+  try {
+    appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+  } catch (err: any) {
+    throw new Error(`Failed to parse app.json: ${err?.message || err}`);
+  }
+  appJson.expo = appJson.expo || {};
+  appJson.expo.android = appJson.expo.android || {};
+  appJson.expo.android.package = pkg;
+  fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2) + '\n', 'utf8');
+  invalidateExpoConfigCache(cwd);
+}
+
+export async function rehydrateKeystore(cwd: string): Promise<void> {
+  await ensureKeystore(cwd, 'rehydrate');
+}
+
+export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
+  const results: CheckResult[] = [];
+
+  const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
+  results.push({
+    name: 'Node >= 20',
+    ok: nodeMajor >= 20,
+    detail: `v${process.versions.node}`,
+  });
+
+  const java = await which('java', ['-version']);
+  results.push({ name: 'JDK (java)', ok: !!java, detail: java || 'not found' });
+
+  const keytool = await which('keytool', ['-help']);
+  results.push({ name: 'keytool', ok: !!keytool, detail: keytool ? 'present' : 'not found' });
+
+  const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  results.push({
+    name: 'ANDROID_HOME / ANDROID_SDK_ROOT',
+    ok: !!androidHome,
+    detail: androidHome || 'not set',
+  });
+
+  if (androidHome) {
+    const sdkmanager = path.join(
+      androidHome,
+      'cmdline-tools',
+      'latest',
+      'bin',
+      process.platform === 'win32' ? 'sdkmanager.bat' : 'sdkmanager'
+    );
+    results.push({
+      name: 'sdkmanager',
+      ok: fs.existsSync(sdkmanager),
+      detail: sdkmanager,
+      warn: !fs.existsSync(sdkmanager),
+    });
+  }
+
+  const eas = await which('eas', ['--version']);
+  results.push({
+    name: 'eas-cli',
+    ok: !!eas,
+    detail: eas || 'not found (optional; needed for EAS sync)',
+    warn: !eas,
+  });
+
+  if (process.platform === 'darwin') {
+    const xcb = await which('xcodebuild', ['-version']);
+    results.push({
+      name: 'xcodebuild (iOS, optional)',
+      ok: !!xcb,
+      detail: xcb || 'not found (install Xcode from the App Store)',
+      warn: !xcb,
+    });
+    const xcrun = await which('xcrun', ['--version']);
+    results.push({
+      name: 'xcrun (iOS, optional)',
+      ok: !!xcrun,
+      detail: xcrun || 'not found (ships with Xcode Command Line Tools)',
+      warn: !xcrun,
+    });
+  } else {
+    results.push({
+      name: 'iOS build prerequisites',
+      ok: true,
+      warn: true,
+      detail: `skipped — iOS builds require macOS (you're on ${process.platform})`,
+    });
+  }
+
+  const expoBin = await projectBinVersion('expo', cwd);
+  results.push({
+    name: 'expo CLI (in project)',
+    ok: !!expoBin,
+    detail: expoBin || 'not found — run `npm install` / `bun install` in your project',
+  });
+
+  try {
+    const sdk = detectExpoSdk(cwd);
+    const supported = sdk.major in GRADLE_PIN;
+    results.push({
+      name: `Expo SDK detected`,
+      ok: true,
+      detail: `${sdk.major} (${sdk.raw})${supported ? '' : ' — not in GRADLE_PIN table'}`,
+      warn: !supported,
+    });
+  } catch (err: any) {
+    results.push({ name: 'Expo SDK detected', ok: false, detail: err?.message || String(err) });
+  }
+
+  const androidPkg = androidPackageCheck(cwd);
+  results.push(androidPkg.result);
+
+  const easLink = detectEasLink(cwd);
+  results.push(easLinkCheck(easLink));
+
+  const ksProps = keystorePropsCheck(cwd);
+  results.push(ksProps.result);
+  const jksResult = jksCheck(cwd, ksProps.props);
+  results.push(jksResult);
+  const credResult = credentialsJsonCheck(cwd, ksProps.props, easLink);
+  results.push(credResult.result);
+
+  const scriptStatuses = compareScripts(cwd);
+  const scaffolded = scriptStatuses.filter((s) => s.exists);
+  const outdatedScripts = scaffolded.filter((s) => s.contentDiffers);
+  if (scaffolded.length) {
+    const latest = scriptStatuses[0]?.templateVersion || '?';
+    results.push({
+      name: 'Scaffolded scripts',
+      ok: outdatedScripts.length === 0,
+      warn: outdatedScripts.length > 0,
+      detail:
+        outdatedScripts.length === 0
+          ? `up to date (v${scaffolded[0]?.userVersion || latest})`
+          : `${outdatedScripts.length} outdated — bundled v${latest}`,
+    });
+  }
+
+  const canFixAndroidPackage =
+    androidPkg.source === 'app.json' && (androidPkg.pkg === null || !ANDROID_PKG_RE.test(androidPkg.pkg));
+  const canEasInit = !!eas && easLink.kind !== 'linked' && easLink.kind !== 'no-expo-config';
+  const canEasConfigure = !!eas && easLink.kind === 'linked' && !easLink.hasEasJson;
+  const rehydrateAvailable = !!findRehydrateCandidate(cwd);
+  const canSetupKeystore = !ksProps.fileExists || !ksProps.props;
+  const easReady = isEasReady(easLink);
+
+  return {
+    results,
+    capabilities: {
+      canFixAndroidPackage,
+      canEasInit,
+      canEasConfigure,
+      rehydrateAvailable,
+      canSetupKeystore,
+      easReady,
+    },
+  };
 }
 
 export interface RunDoctorOpts {

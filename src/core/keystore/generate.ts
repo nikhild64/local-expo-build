@@ -5,22 +5,63 @@ import { input, password } from '@inquirer/prompts';
 import { writeKeystoreProps } from '../setupSigning';
 import { log } from '../../util/log';
 
-export async function generateKeystore(cwd: string): Promise<void> {
-  const filename = await input({ message: 'Keystore filename:', default: 'release.jks' });
-  const keyAlias = await input({ message: 'Key alias:', default: 'release' });
-  const storePassword = await password({
-    message: 'Keystore password (min 6 chars):',
-    mask: '*',
-    validate: (v) => (v.length >= 6 ? true : 'At least 6 characters'),
-  });
-  const keyPassword = await password({
-    message: 'Key password (leave same as keystore):',
-    mask: '*',
-    validate: (v) => (v.length >= 6 ? true : 'At least 6 characters'),
-  });
-  const cn = await input({ message: 'Your name (CN):', default: 'Release Signer' });
-  const org = await input({ message: 'Organization (O):', default: 'Unknown' });
-  const country = await input({ message: 'Country code (C, 2 letters):', default: 'US' });
+export interface GenerateKeystoreParams {
+  filename?: string;
+  keyAlias?: string;
+  storePassword?: string;
+  keyPassword?: string;
+  cn?: string;
+  org?: string;
+  country?: string;
+}
+
+export async function generateKeystore(
+  cwd: string,
+  params?: GenerateKeystoreParams
+): Promise<void> {
+  let filename: string;
+  let keyAlias: string;
+  let storePassword: string;
+  let keyPassword: string;
+  let cn: string;
+  let org: string;
+  let country: string;
+
+  if (params !== undefined) {
+    if (!params.storePassword) {
+      throw new Error('Keystore password is required (minimum 6 characters).');
+    }
+    filename = params.filename || 'release.jks';
+    keyAlias = params.keyAlias || 'release';
+    storePassword = params.storePassword;
+    keyPassword = params.keyPassword || storePassword;
+    cn = params.cn || 'Release Signer';
+    org = params.org || 'Unknown';
+    country = params.country || 'US';
+
+    if (storePassword.length < 6) {
+      throw new Error('Keystore password must be at least 6 characters.');
+    }
+    if (keyPassword.length < 6) {
+      throw new Error('Key password must be at least 6 characters.');
+    }
+  } else {
+    filename = await input({ message: 'Keystore filename:', default: 'release.jks' });
+    keyAlias = await input({ message: 'Key alias:', default: 'release' });
+    storePassword = await password({
+      message: 'Keystore password (min 6 chars):',
+      mask: '*',
+      validate: (v) => (v.length >= 6 ? true : 'At least 6 characters'),
+    });
+    keyPassword = await password({
+      message: 'Key password (leave same as keystore):',
+      mask: '*',
+      validate: (v) => (v.length >= 6 ? true : 'At least 6 characters'),
+    });
+    cn = await input({ message: 'Your name (CN):', default: 'Release Signer' });
+    org = await input({ message: 'Organization (O):', default: 'Unknown' });
+    country = await input({ message: 'Country code (C, 2 letters):', default: 'US' });
+  }
 
   const dname = `CN=${cn}, O=${org}, C=${country}`;
   const destDir = path.join(cwd, 'android', 'app');
@@ -54,7 +95,7 @@ export async function generateKeystore(cwd: string): Promise<void> {
       '-dname',
       dname,
     ],
-    { stdio: 'inherit' }
+    { stdio: params ? 'pipe' : 'inherit' }
   );
 
   // Belt-and-suspenders: keep a copy at project root so the .jks survives
