@@ -45,8 +45,17 @@ function replaceResultByName(results: CheckResult[], name: string, newRow: Check
 
 async function which(cmd: string, args: string[] = ['-version']): Promise<string | null> {
   try {
-    const { stdout, stderr } = await execa(cmd, args, { reject: false, timeout: 3_000 });
-    return (stdout || stderr || '').split('\n')[0]?.trim() || cmd;
+    const { stdout, stderr, exitCode } = await execa(cmd, args, {
+      reject: false,
+      timeout: 1_500,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (exitCode !== 0 && !stdout) return null;
+    const line = (stdout || stderr || '').split('\n')[0]?.trim();
+    if (!line || line.includes('not recognized') || line.includes('is not internal') || line.includes('not found')) {
+      return null;
+    }
+    return line;
   } catch {
     return null;
   }
@@ -60,7 +69,8 @@ async function projectBinVersion(name: string, cwd: string): Promise<string | nu
     const { stdout, stderr } = await execa(command, args, {
       cwd,
       reject: false,
-      timeout: 3_000,
+      timeout: 1_500,
+      stdio: ['ignore', 'pipe', 'pipe'],
       ...execaOpts,
     });
     return (stdout || stderr || '').split('\n')[0]?.trim() || name;
@@ -505,6 +515,56 @@ export async function rehydrateKeystore(cwd: string): Promise<void> {
 }
 
 export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
+  return Promise.race([
+    performDoctorChecks(cwd),
+    new Promise<DoctorCheckSummary>((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            results: [
+              { name: 'Node >= 20', ok: true, detail: `v${process.versions.node}` },
+              { name: 'Environment check timeout', ok: true, warn: true, detail: 'Doctor checks completed partially.' },
+            ],
+            capabilities: {
+              canFixAndroidPackage: false,
+              canEasInit: false,
+              canEasConfigure: false,
+              rehydrateAvailable: false,
+              canSetupKeystore: false,
+              easReady: false,
+            },
+          }),
+        8_000
+      )
+    ),
+  ]);
+}
+
+let envChecksCache: {
+  timestamp: number;
+  data: [string | null, string | null, string | null, string | null, string | null, string | null];
+} | null = null;
+
+async function getCachedEnvChecks(
+  cwd: string
+): Promise<[string | null, string | null, string | null, string | null, string | null, string | null]> {
+  const now = Date.now();
+  if (envChecksCache && now - envChecksCache.timestamp < 30_000) {
+    return envChecksCache.data;
+  }
+  const data = await Promise.all([
+    which('java', ['-version']),
+    which('keytool', ['-help']),
+    which('eas', ['--version']),
+    projectBinVersion('expo', cwd),
+    process.platform === 'darwin' ? which('xcodebuild', ['-version']) : Promise.resolve(null),
+    process.platform === 'darwin' ? which('xcrun', ['--version']) : Promise.resolve(null),
+  ]);
+  envChecksCache = { timestamp: now, data };
+  return data;
+}
+
+async function performDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
   const results: CheckResult[] = [];
 
   const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
@@ -514,14 +574,7 @@ export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSumma
     detail: `v${process.versions.node}`,
   });
 
-  const [java, keytool, eas, expoBin, xcb, xcrun] = await Promise.all([
-    which('java', ['-version']),
-    which('keytool', ['-help']),
-    which('eas', ['--version']),
-    projectBinVersion('expo', cwd),
-    process.platform === 'darwin' ? which('xcodebuild', ['-version']) : Promise.resolve(null),
-    process.platform === 'darwin' ? which('xcrun', ['--version']) : Promise.resolve(null),
-  ]);
+  const [java, keytool, eas, expoBin, xcb, xcrun] = await getCachedEnvChecks(cwd);
 
   results.push({ name: 'JDK (java)', ok: !!java, detail: java || 'not found' });
   results.push({ name: 'keytool', ok: !!keytool, detail: keytool ? 'present' : 'not found' });

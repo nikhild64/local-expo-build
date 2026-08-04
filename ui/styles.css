@@ -65,23 +65,41 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
-.brand-badge {
-  background: var(--color-primary);
-  color: #111113;
-  font-weight: 900;
-  font-size: 11px;
-  padding: 3px 8px;
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-hi);
   border-radius: var(--radius-sm);
-  letter-spacing: 0.5px;
+  color: var(--color-primary);
 }
 
 .brand-title {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 800;
   color: var(--color-text);
   letter-spacing: -0.5px;
+}
+
+.project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(237, 238, 240, 0.07);
+  border: 1px solid var(--color-border-hi);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  margin-left: 4px;
 }
 
 .header-status {

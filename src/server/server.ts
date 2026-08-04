@@ -146,10 +146,24 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
       try {
         if (req.method === 'GET' && pathname === '/api/status') {
           const easLink = detectEasLink(cwd);
+          let projectName = path.basename(cwd);
+          const pkgPath = path.join(cwd, 'package.json');
+          if (fs.existsSync(pkgPath)) {
+            try {
+              const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+              if (typeof pkg.name === 'string' && pkg.name.trim()) {
+                projectName = pkg.name.trim();
+              }
+            } catch {
+              /* ignore malformed package.json */
+            }
+          }
           res.writeHead(200);
           res.end(
             JSON.stringify({
               cwd,
+              projectName,
+              folderName: path.basename(cwd),
               port: actualPort,
               dryRun,
               buildStatus: activeBuild ? 'building' : 'idle',

@@ -22,6 +22,9 @@
   const artifactResult = document.getElementById('artifact-result');
   const artifactPath = document.getElementById('artifact-path');
 
+  const projectChip = document.getElementById('project-chip');
+  const projectNameText = document.getElementById('project-name-text');
+
   const doctorGrid = document.getElementById('doctor-grid');
   const doctorSummaryBanner = document.getElementById('doctor-summary-banner');
   const btnRefreshDoctor = document.getElementById('btn-refresh-doctor');
@@ -290,6 +293,15 @@
       const data = await res.json();
       hostInfo.textContent = `127.0.0.1:${data.port}`;
 
+      if (data.projectName || data.folderName) {
+        const name = data.projectName || data.folderName;
+        if (projectNameText && projectChip) {
+          projectNameText.textContent = name;
+          projectChip.title = data.cwd ? `Folder: ${data.cwd}` : name;
+          projectChip.style.display = 'inline-flex';
+        }
+      }
+
       if (data.dryRun) {
         dryRunBadge.style.display = 'inline-block';
       } else {
@@ -485,7 +497,7 @@
 
   // ── Doctor Tab ──
   function setupDoctorTab() {
-    btnRefreshDoctor.addEventListener('click', () => fetchDoctor());
+    btnRefreshDoctor.addEventListener('click', () => fetchDoctor(true));
 
     btnFixPkg.addEventListener('click', async () => {
       const pkg = await showPrompt(
@@ -543,11 +555,23 @@
     });
   }
 
-  async function fetchDoctor() {
-    if (doctorRequest) return doctorRequest;
+  let doctorAbortController = null;
+
+  async function fetchDoctor(force = false) {
+    if (force) {
+      if (doctorAbortController) {
+        doctorAbortController.abort();
+        doctorAbortController = null;
+      }
+      doctorRequest = null;
+    } else if (doctorRequest) {
+      return doctorRequest;
+    }
+
     doctorRequest = (async () => {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
+      doctorAbortController = controller;
+      const timeout = setTimeout(() => controller.abort(), 15_000);
       try {
         setDoctorLoading(true);
         doctorSummaryBanner.className = 'alert info margin-bottom';
@@ -563,13 +587,19 @@
         const summary = await res.json();
         renderDoctorResults(summary);
       } catch (err) {
+        if (err.name === 'AbortError' && doctorAbortController !== controller) {
+          return;
+        }
         doctorSummaryBanner.className = 'alert danger margin-bottom';
         doctorSummaryBanner.textContent = err.name === 'AbortError'
-          ? 'Doctor checks timed out after 30 seconds. Click Refresh Doctor to retry.'
+          ? 'Doctor checks timed out. Click Refresh Doctor to retry.'
           : `Error: ${err.message}`;
       } finally {
         clearTimeout(timeout);
-        doctorRequest = null;
+        if (doctorAbortController === controller) {
+          doctorAbortController = null;
+          doctorRequest = null;
+        }
         btnRefreshDoctor.disabled = false;
       }
     })();
