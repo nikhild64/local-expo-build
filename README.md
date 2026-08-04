@@ -82,14 +82,14 @@ local-expo-build doctor                     Env check + interactive auto-fix wiz
                                              keystore setup)
 
 # ── Local Web UI ──
-local-expo-build ui [--port <n>] [--no-open]
+local-expo-build ui [--port <n>] [--no-open] [--logs]
                                             Launch local browser UI (localhost only)
                                             for Android builds, Doctor, Keystore,
                                             multipart upload, and one-click EAS actions.
 
 # ── Android (stable) ──
 local-expo-build build android [--apk|--aab] [--profile <name>]
-                               [--clean] [--no-bump] [--no-sync] [--no-prebuild]
+                               [--clean] [--no-bump] [--no-sync] [--no-prebuild] [--debug]
                                             Run the full Android pipeline → .aab|.apk
 
 local-expo-build keystore setup             Interactive picker:
@@ -131,9 +131,47 @@ npx local-expo-build ui [--port 3847] [--no-open] [--logs]
 - **One-click EAS actions**: Link an EAS project, generate `eas.json` through `eas build:configure`, and fetch Android signing credentials directly from Expo's API. Authentication uses `EXPO_TOKEN`, an existing `eas login` session, or a token pasted into the local UI (held only in memory).
 - **`--logs`**: Mirrors safe UI-server lifecycle and Android build output to the terminal. Credential-like values and large base64 blobs are redacted.
 - **Scaffold tab**: Drops the reusable, committable `scripts/*.js` + `build:android:aab` / `build:android:apk` npm scripts into your project (same as `npx local-expo-build init`), then you build from the terminal with `npm run build:android:aab`.
-```
 
-Global flags: `--cwd <path>`, `--verbose`, `--dry-run`.
+### Step-by-Step UI Flow
+
+#### 1. Environment Diagnostics & Auto-Fixes (Doctor Tab)
+Launch `npx local-expo-build ui` and navigate to the **Doctor** tab. The UI performs pre-flight verification on Node, JDK, keytool, `ANDROID_HOME`, `sdkmanager`, `eas-cli`, Expo CLI, Expo SDK version, and `app.json` configuration.
+
+If any checks fail or require setup (such as missing `expo.android.package` or an unlinked EAS project), Environment Doctor highlights them and provides 1-click action buttons (**Fix All Issues**, **Fix Package Name**, **Link EAS Project**, **Create eas.json**).
+
+![Doctor Tab - Environment Diagnostics & Issues](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/doctor-issues.png)
+
+Once issues are resolved, the status banner switches to **"All environment checks passed! You are ready to build."** with green **PASS** badges across all environment cards.
+
+![Doctor Tab - All Environment Checks Passed](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/doctor-all-ok.png)
+
+#### 2. Keystore & Signing Management (Keystore Tab)
+Open the **Keystore** tab to manage your release signing credentials. The top card displays your current **Keystore Status** (`keystore.properties` presence, active Store File, and Key Alias).
+
+The **Keystore Management Wizard** provides 5 flexible sub-tabs:
+- **Fetch from EAS**: Authenticate with Expo to select and download your registered release keystores directly from EAS into your local workspace.
+- **Upload .jks File**: Drag-and-drop or select a `.jks` file from your machine for instant upload and configuration.
+- **Import Local Path**: Register an existing `.jks` file path on your local filesystem.
+- **Generate New**: Generate a new release keypair using `keytool` directly within the browser interface.
+- **Rehydrate**: Automatically recreate `keystore.properties` and restore `.jks` from `credentials.json` without re-entering passwords.
+
+![Keystore Tab - EAS Fetch & Credentials Management](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/keystore-tab.png)
+
+#### 3. Triggering & Monitoring Local Builds (Build Android Tab)
+Navigate to the **Build Android** tab to start your build:
+- **Artifact Format**: Select **AAB (`bundleRelease`)** for Google Play Store release or **APK (`assembleRelease`)** for direct device installation and testing.
+- **EAS Profile**: Set your target EAS profile (e.g. `production`) for automatic `versionCode` bumping and syncing.
+- **Build Options**: Toggle optional build flags including `--clean`, `--no-bump`, `--no-sync`, `--no-prebuild`, or **Debug build**.
+- Click **Start Local Build**. The live status turns to **Building...** with an active build timer, and compilation logs stream in real-time into the **Build Log Output** terminal via Server-Sent Events (SSE).
+
+![Build Android Tab - Build in Progress with Live Logs](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/build-progress.png)
+
+#### 4. Build Completion & Output Artifact
+Upon successful build completion, a green **Build Artifact Ready** banner appears. The log window displays `[OK] Build complete` with the exact file size and full absolute local path to your compiled `.aab` or `.apk` file.
+
+![Build Android Tab - Build Succeeded & Artifact Ready](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/build-done.png)
+
+Global flags: `--cwd <path>`, `--verbose`, `--dry-run`, `--no-update-check`, `--yes-update`.
 
 > **Dry-run** is wired into `build android` and the scaffolded orchestrator. Use it to preview the full pipeline (great for screenshots, sanity checks, CI plan-mode):
 >
