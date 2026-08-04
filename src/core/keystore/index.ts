@@ -33,7 +33,7 @@ export async function ensureKeystore(
   const existing = readKeystoreProps(cwd);
   if (existing) {
     log.ok(`keystore.properties already present (alias=${existing.keyAlias}).`);
-    ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', 'credentials.json']);
+    ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
     writeCredentialsJson(cwd, existing);
     return;
   }

@@ -78,4 +78,12 @@ describe('findRehydrateCandidate', () => {
     assert.ok(result);
     assert.strictEqual(result.storeFile, 'myapp.jks');
   });
+
+  it('finds candidate when credentials.json references .p12 but .jks exists on disk (or vice versa)', () => {
+    writeFakeJks(dir, 'credentials/android/release.jks');
+    writeCredentials(dir, 'credentials/android/release.p12');
+    const result = findRehydrateCandidate(dir);
+    assert.ok(result);
+    assert.strictEqual(result.storeFile, 'release.jks');
+  });
 });

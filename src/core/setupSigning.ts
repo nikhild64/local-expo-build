@@ -25,6 +25,22 @@ function ensureKeystoreInAndroidApp(cwd: string, storeFile: string): void {
   const dest = path.join(destDir, storeFile);
   if (isNonEmptyFile(dest)) return;
 
+  const ext = path.extname(storeFile);
+  const altExt = ext === '.p12' ? '.jks' : ext === '.jks' ? '.p12' : '';
+  const altStoreFile = altExt ? storeFile.slice(0, -ext.length) + altExt : '';
+
+  // Check if an alternate extension file already exists in android/app/
+  if (altStoreFile) {
+    const altDest = path.join(destDir, altStoreFile);
+    if (isNonEmptyFile(altDest)) {
+      const props = readKeystoreProps(cwd);
+      if (props) {
+        writeKeystoreProps(cwd, { ...props, storeFile: altStoreFile });
+      }
+      return;
+    }
+  }
+
   const candidates: string[] = [];
 
   const credPath = path.join(cwd, 'credentials.json');
@@ -33,15 +49,30 @@ function ensureKeystoreInAndroidApp(cwd: string, storeFile: string): void {
       const cred = JSON.parse(fs.readFileSync(credPath, 'utf8'));
       const ksPath = cred?.android?.keystore?.keystorePath;
       if (typeof ksPath === 'string' && ksPath.trim()) {
-        candidates.push(path.resolve(cwd, ksPath));
+        const absKs = path.resolve(cwd, ksPath);
+        candidates.push(absKs);
+        if (altExt) {
+          const ksExt = path.extname(absKs);
+          const altKsExt = ksExt === '.p12' ? '.jks' : ksExt === '.jks' ? '.p12' : '';
+          if (altKsExt) {
+            candidates.push(absKs.slice(0, -ksExt.length) + altKsExt);
+          }
+        }
       }
     } catch {
       // ignore malformed credentials.json — other candidates may still work
     }
   }
   candidates.push(path.join(cwd, 'credentials', 'android', storeFile));
+  if (altStoreFile) {
+    candidates.push(path.join(cwd, 'credentials', 'android', altStoreFile));
+  }
+  candidates.push(path.join(cwd, 'credentials', 'android', 'keystore.p12'));
   candidates.push(path.join(cwd, 'credentials', 'android', 'keystore.jks'));
   candidates.push(path.join(cwd, storeFile));
+  if (altStoreFile) {
+    candidates.push(path.join(cwd, altStoreFile));
+  }
 
   const found = candidates.find((p) => {
     const abs = path.resolve(p);
@@ -57,15 +88,25 @@ function ensureKeystoreInAndroidApp(cwd: string, storeFile: string): void {
         `and no recovery source available.\nTried:\n${tried}\n\n` +
         `If your android/ directory was just wiped by \`expo prebuild --clean\`, ` +
         `re-run \`npx local-expo-build keystore rehydrate\` (if you have credentials.json) ` +
-        `or \`npx local-expo-build keystore import <path-to-jks>\` to restore it.`
+        `or \`npx local-expo-build keystore import <path-to-keystore>\` to restore it.`
     );
   }
 
+  const actualStoreFile = path.basename(found);
+  const targetDest = path.join(destDir, actualStoreFile);
   fs.mkdirSync(destDir, { recursive: true });
-  fs.copyFileSync(found, dest);
+  fs.copyFileSync(found, targetDest);
+
+  if (actualStoreFile !== storeFile) {
+    const props = readKeystoreProps(cwd);
+    if (props) {
+      writeKeystoreProps(cwd, { ...props, storeFile: actualStoreFile });
+    }
+  }
+
   log.ok(
     `Restored keystore: ${path.relative(cwd, found).replace(/\\/g, '/')} → ` +
-      `${path.relative(cwd, dest).replace(/\\/g, '/')}`
+      `${path.relative(cwd, targetDest).replace(/\\/g, '/')}`
   );
 }
 

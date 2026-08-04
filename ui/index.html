@@ -278,9 +278,9 @@
           <div id="subpanel-ks-upload" class="subpanel">
             <form id="form-ks-upload" class="wizard-form">
               <div class="drop-zone" id="jks-drop-zone">
-                <input type="file" id="input-jks-file" accept=".jks,.keystore" style="display: none;">
+                <input type="file" id="input-jks-file" accept=".p12,.jks,.keystore" style="display: none;">
                 <svg viewBox="0 0 24 24" width="36" height="36"><path fill="currentColor" d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
-                <div class="drop-title">Drag & drop your <code>.jks</code> file here</div>
+                <div class="drop-title">Drag & drop your <code>.p12</code> or <code>.jks</code> file here</div>
                 <div class="drop-sub">or click to browse from disk</div>
                 <div id="selected-file-name" class="selected-file"></div>
               </div>
@@ -308,8 +308,8 @@
           <div id="subpanel-ks-import" class="subpanel">
             <form id="form-ks-import" class="wizard-form">
               <div class="form-group">
-                <label class="form-label" for="import-path">Path to .jks file on disk</label>
-                <input type="text" id="import-path" class="form-input" placeholder="e.g. C:\keys\my-release-key.jks or ./my-release-key.jks">
+                <label class="form-label" for="import-path">Path to keystore file on disk (.p12 / .jks)</label>
+                <input type="text" id="import-path" class="form-input" placeholder="e.g. C:\keys\my-release-key.p12 or ./my-release-key.jks">
               </div>
               <div class="form-row">
                 <div class="form-group">
@@ -335,7 +335,7 @@
               <div class="form-row">
                 <div class="form-group">
                   <label class="form-label" for="gen-filename">Keystore Filename</label>
-                  <input type="text" id="gen-filename" class="form-input" value="release.jks">
+                  <input type="text" id="gen-filename" class="form-input" value="release.p12">
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="gen-alias">Key Alias</label>

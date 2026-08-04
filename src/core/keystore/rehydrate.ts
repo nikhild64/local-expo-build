@@ -44,8 +44,21 @@ export function findRehydrateCandidate(cwd: string): RehydrateCandidate | null {
     return null;
   }
 
-  const jksSourceAbs = path.resolve(cwd, ks.keystorePath);
-  if (!fs.existsSync(jksSourceAbs)) return null;
+  let jksSourceAbs = path.resolve(cwd, ks.keystorePath);
+  if (!fs.existsSync(jksSourceAbs)) {
+    const ext = path.extname(jksSourceAbs);
+    const altExt = ext === '.p12' ? '.jks' : ext === '.jks' ? '.p12' : '';
+    if (altExt) {
+      const altPath = jksSourceAbs.slice(0, -ext.length) + altExt;
+      if (fs.existsSync(altPath)) {
+        jksSourceAbs = altPath;
+      } else {
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
 
   return {
     credPath,

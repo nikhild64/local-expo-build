@@ -32,7 +32,7 @@ export async function generateKeystore(
     if (!params.storePassword) {
       throw new Error('Keystore password is required (minimum 6 characters).');
     }
-    filename = params.filename || 'release.jks';
+    filename = params.filename || 'release.p12';
     keyAlias = params.keyAlias || 'release';
     storePassword = params.storePassword;
     keyPassword = params.keyPassword || storePassword;
@@ -47,7 +47,7 @@ export async function generateKeystore(
       throw new Error('Key password must be at least 6 characters.');
     }
   } else {
-    filename = await input({ message: 'Keystore filename:', default: 'release.jks' });
+    filename = await input({ message: 'Keystore filename:', default: 'release.p12' });
     keyAlias = await input({ message: 'Key alias:', default: 'release' });
     storePassword = await password({
       message: 'Keystore password (min 6 chars):',
@@ -79,6 +79,8 @@ export async function generateKeystore(
     [
       '-genkeypair',
       '-v',
+      '-storetype',
+      'PKCS12',
       '-keystore',
       destPath,
       '-alias',
@@ -99,9 +101,9 @@ export async function generateKeystore(
     { stdio: params ? 'pipe' : 'inherit' }
   );
 
-  // Belt-and-suspenders: keep a copy at project root so the .jks survives
+  // Belt-and-suspenders: keep a copy at project root so the keystore survives
   // `expo prebuild --clean` wiping android/. setupSigning's recovery step
-  // looks here as a fallback. Gitignored via the `*.jks` entry.
+  // looks here as a fallback. Gitignored via `*.p12` / `*.jks` entries.
   const rootBackup = path.join(cwd, filename);
   fs.copyFileSync(destPath, rootBackup);
   log.dim(`Backup → ${filename} (project root, gitignored)`);

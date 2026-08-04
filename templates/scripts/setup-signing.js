@@ -24,6 +24,21 @@ function ensureKeystoreInAndroidApp(cwd, storeFile) {
   const dest = path.join(destDir, storeFile);
   if (isNonEmptyFile(dest)) return;
 
+  const ext = path.extname(storeFile);
+  const altExt = ext === '.p12' ? '.jks' : ext === '.jks' ? '.p12' : '';
+  const altStoreFile = altExt ? storeFile.slice(0, -ext.length) + altExt : '';
+
+  if (altStoreFile) {
+    const altDest = path.join(destDir, altStoreFile);
+    if (isNonEmptyFile(altDest)) {
+      if (props && props.storeFile) {
+        props.storeFile = altStoreFile;
+        writePropsFile(PROPS_PATH, props);
+      }
+      return;
+    }
+  }
+
   const candidates = [];
 
   const credPath = path.join(cwd, 'credentials.json');
@@ -32,13 +47,28 @@ function ensureKeystoreInAndroidApp(cwd, storeFile) {
       const cred = JSON.parse(fs.readFileSync(credPath, 'utf8'));
       const ksPath = cred && cred.android && cred.android.keystore && cred.android.keystore.keystorePath;
       if (typeof ksPath === 'string' && ksPath.trim()) {
-        candidates.push(path.resolve(cwd, ksPath));
+        const absKs = path.resolve(cwd, ksPath);
+        candidates.push(absKs);
+        if (altExt) {
+          const ksExt = path.extname(absKs);
+          const altKsExt = ksExt === '.p12' ? '.jks' : ksExt === '.jks' ? '.p12' : '';
+          if (altKsExt) {
+            candidates.push(absKs.slice(0, -ksExt.length) + altKsExt);
+          }
+        }
       }
     } catch (_) {}
   }
   candidates.push(path.join(cwd, 'credentials', 'android', storeFile));
+  if (altStoreFile) {
+    candidates.push(path.join(cwd, 'credentials', 'android', altStoreFile));
+  }
+  candidates.push(path.join(cwd, 'credentials', 'android', 'keystore.p12'));
   candidates.push(path.join(cwd, 'credentials', 'android', 'keystore.jks'));
   candidates.push(path.join(cwd, storeFile));
+  if (altStoreFile) {
+    candidates.push(path.join(cwd, altStoreFile));
+  }
 
   const found = candidates.find((p) => {
     const abs = path.resolve(p);
@@ -56,12 +86,32 @@ function ensureKeystoreInAndroidApp(cwd, storeFile) {
     process.exit(1);
   }
 
+  const actualStoreFile = path.basename(found);
+  const targetDest = path.join(destDir, actualStoreFile);
   fs.mkdirSync(destDir, { recursive: true });
-  fs.copyFileSync(found, dest);
+  fs.copyFileSync(found, targetDest);
+
+  if (actualStoreFile !== storeFile && props) {
+    props.storeFile = actualStoreFile;
+    writePropsFile(PROPS_PATH, props);
+  }
+
   console.log(
     'Restored keystore: ' + path.relative(cwd, found).replace(/\\/g, '/') +
-    ' → ' + path.relative(cwd, dest).replace(/\\/g, '/')
+    ' → ' + path.relative(cwd, targetDest).replace(/\\/g, '/')
   );
+}
+
+function writePropsFile(p, pObj) {
+  try {
+    const lines = [
+      `storeFile=${pObj.storeFile}`,
+      `storePassword=${pObj.storePassword}`,
+      `keyAlias=${pObj.keyAlias}`,
+      `keyPassword=${pObj.keyPassword}`,
+    ];
+    fs.writeFileSync(p, lines.join('\n') + '\n', 'utf8');
+  } catch (_) {}
 }
 
 if (!fs.existsSync(PROPS_PATH)) {

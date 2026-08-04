@@ -365,6 +365,10 @@
         }
       }
 
+      if (data.easLink) {
+        updateEasLinkUI(data.easLink);
+      }
+
       if (data.dryRun) {
         dryRunBadge.style.display = 'inline-block';
       } else {
@@ -378,6 +382,23 @@
       }
     } catch {
       // Ignore poll error
+    }
+  }
+
+  function updateEasLinkUI(easLink) {
+    if (!easLinkSummary || !btnTriggerEasLink) return;
+    if (easLink && easLink.kind === 'linked' && easLink.projectId) {
+      easLinkSummary.innerHTML = `Linked to EAS project ID <code>${escapeHtml(easLink.projectId)}</code>`;
+      btnTriggerEasLink.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" style="margin-right: 4px; vertical-align: middle;"><path fill="currentColor" d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>Relink / Change Project`;
+      btnTriggerEasLink.className = 'btn btn-secondary btn-sm';
+    } else if (easLink && easLink.kind === 'linked') {
+      easLinkSummary.textContent = 'Linked to EAS project';
+      btnTriggerEasLink.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" style="margin-right: 4px; vertical-align: middle;"><path fill="currentColor" d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>Relink / Change Project`;
+      btnTriggerEasLink.className = 'btn btn-secondary btn-sm';
+    } else {
+      easLinkSummary.textContent = 'Not linked to an EAS project';
+      btnTriggerEasLink.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" style="margin-right: 4px; vertical-align: middle;"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>Link / Create EAS Project`;
+      btnTriggerEasLink.className = 'btn btn-primary btn-sm';
     }
   }
 
@@ -714,7 +735,7 @@
             body: JSON.stringify({
               provider: 'generate',
               params: {
-                filename: 'release.jks',
+                filename: 'release.p12',
                 keyAlias: 'release',
                 storePassword: pass,
                 keyPassword: pass,
@@ -732,7 +753,7 @@
                 easUploadMsg = ' & uploaded to EAS Cloud';
               }
             } catch {}
-            fixesApplied.push(`Generated new release keystore (release.jks) & credentials.json${easUploadMsg}`);
+            fixesApplied.push(`Generated new release keystore (release.p12) & credentials.json${easUploadMsg}`);
           }
         }
       }
@@ -1135,7 +1156,7 @@
       const payload = {
         provider: 'generate',
         params: {
-          filename: document.getElementById('gen-filename').value.trim() || 'release.jks',
+          filename: document.getElementById('gen-filename').value.trim() || 'release.p12',
           keyAlias: document.getElementById('gen-alias').value.trim() || 'release',
           storePassword: document.getElementById('gen-store-pass').value,
           keyPassword: document.getElementById('gen-key-pass').value || document.getElementById('gen-store-pass').value,
@@ -1348,11 +1369,11 @@
       easKeystores = [];
       easKeystoreList.innerHTML = '';
       easKeystoreStatus.textContent = data.error || 'Link an EAS project and authenticate to list stored keystores.';
-      if (easLinkSummary) easLinkSummary.textContent = 'Not linked to an EAS project';
+      updateEasLinkUI({ kind: 'not-linked' });
       if (easActionButtons) easActionButtons.style.display = 'none';
       return;
     }
-    if (easLinkSummary) easLinkSummary.textContent = 'Linked to EAS project';
+    updateEasLinkUI({ kind: 'linked', projectId: data.projectId });
     if (easActionButtons) easActionButtons.style.display = 'flex';
     easKeystores = data.keystores || [];
     renderEasKeystores();
@@ -1409,7 +1430,7 @@
         body: JSON.stringify({
           provider: 'generate',
           params: {
-            filename: 'release.jks',
+            filename: 'release.p12',
             keyAlias: 'release',
             storePassword: pass,
             keyPassword: pass,
@@ -1442,8 +1463,8 @@
 
       await showAlert(
         'Keystore Created & Configured!',
-        `Generated a new release keystore (release.jks) with alias "release".\n\n` +
-          `• Saved locally to android/app/release.jks\n` +
+        `Generated a new release keystore (release.p12) with alias "release".\n\n` +
+          `• Saved locally to android/app/release.p12\n` +
           `• Configured in keystore.properties\n` +
           `• Synced with credentials.json\n` +
           `• ${syncMsg}`,

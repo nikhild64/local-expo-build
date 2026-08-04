@@ -168,6 +168,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
               dryRun,
               buildStatus: activeBuild ? 'building' : 'idle',
               easReady: isEasReady(easLink),
+              easLink,
               keystoreProps: readKeystoreProps(cwd),
             })
           );
@@ -260,7 +261,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           const link = detectEasLink(cwd);
           if (link.kind !== 'linked') { res.writeHead(409); res.end(JSON.stringify({ error: 'This project is not linked to EAS. Link an EAS project first.' })); return; }
           const keystores = await listEasKeystores(link.projectId, currentEasAuth());
-          res.writeHead(200); res.end(JSON.stringify({ keystores })); return;
+          res.writeHead(200); res.end(JSON.stringify({ projectId: link.projectId, keystores })); return;
         }
 
         if (req.method === 'POST' && pathname === '/api/keystore/fetch-eas') {
