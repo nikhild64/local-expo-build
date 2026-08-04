@@ -58,6 +58,7 @@ export function registerBuildCommand(program: Command): void {
     .option('--no-bump', 'skip version bump')
     .option('--no-sync', 'skip EAS versionCode sync after build')
     .option('--no-prebuild', 'skip expo prebuild step')
+    .option('--debug', 'build a debug APK with the debug keystore (no EAS, no version bump, no signing setup)')
     .action(async (opts, cmd) => {
       const ctx = getCtx(cmd);
       await maybePromptScriptUpdate({
@@ -78,6 +79,7 @@ export function registerBuildCommand(program: Command): void {
         sync: opts.sync,
         dryRun: ctx.dryRun,
         ensureKeystoreMode: 'interactive',
+        debug: !!opts.debug,
       });
     });
 

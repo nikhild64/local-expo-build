@@ -5,10 +5,12 @@ const os = require('os');
 const path = require('path');
 
 const {
+  applyScriptUpdates,
   compareScripts,
   getOutdatedScripts,
   hasScaffoldedScripts,
   readScriptVersion,
+  scaffoldProject,
 } = require('../dist/core/scaffoldScripts');
 
 function mkTemp(prefix) {
@@ -44,5 +46,42 @@ describe('scaffoldScripts', () => {
     const statuses = compareScripts(cwd);
     assert.equal(statuses.length > 0, true);
     assert.equal(statuses.every((s) => !s.exists), true);
+  });
+
+  it('scaffoldProject copies scripts and adds package.json npm scripts', () => {
+    const cwd = mkTemp('leb-scr-proj-');
+    fs.writeFileSync(
+      path.join(cwd, 'package.json'),
+      JSON.stringify({ name: 'x', version: '1.0.0' }, null, 2)
+    );
+    const result = scaffoldProject(cwd);
+
+    // Scripts copied
+    assert.ok(fs.existsSync(path.join(cwd, 'scripts', 'build.js')), 'build.js should exist');
+    assert.ok(fs.existsSync(path.join(cwd, 'keystore.properties.example')), 'example should exist');
+    assert.ok(result.wroteFiles.includes('build.js'));
+    assert.ok(result.packageScriptsModified);
+
+    // npm scripts added
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+    assert.equal(pkg.scripts['build:android:aab'], 'node scripts/build.js aab');
+    assert.equal(pkg.scripts['build:android:apk'], 'node scripts/build.js apk');
+
+    // Second (non-force) call is idempotent for existing identical files
+    const second = scaffoldProject(cwd);
+    assert.ok(second.skippedFiles.includes('build.js'));
+    assert.equal(second.packageScriptsModified, false);
+  });
+
+  it('applyScriptUpdates copies template over user scripts', () => {
+    const cwd = mkTemp('leb-scr-app-');
+    const scriptsDir = path.join(cwd, 'scripts');
+    fs.mkdirSync(scriptsDir, { recursive: true });
+    fs.writeFileSync(path.join(scriptsDir, 'build.js'), '// stale\n');
+    const statuses = compareScripts(cwd);
+    const build = statuses.find((s) => s.name === 'build.js');
+    assert.ok(build.contentDiffers, 'stale file should differ from template');
+    applyScriptUpdates([build]);
+    assert.equal(readScriptVersion(path.join(scriptsDir, 'build.js')) !== null, true);
   });
 });

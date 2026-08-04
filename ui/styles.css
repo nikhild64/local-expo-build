@@ -48,7 +48,7 @@ body {
 .app-container {
   max-width: 1140px;
   margin: 0 auto;
-  padding: 24px 20px 180px 20px; /* bottom padding for terminal dock */
+  padding: 24px 20px 48px;
 }
 
 /* Header */
@@ -407,6 +407,24 @@ body {
   border-radius: var(--radius-sm);
 }
 
+.build-action-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.build-action-row .btn-lg { flex: 1; min-width: 180px; }
+
+.build-timer {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-primary);
+  min-width: 56px;
+  text-align: center;
+}
+
 .full-width {
   width: 100%;
 }
@@ -436,6 +454,20 @@ body {
   background: rgba(208, 114, 68, 0.15);
   border-color: rgba(208, 114, 68, 0.4);
   color: #f7a278;
+}
+
+.doctor-summary-list {
+  margin: 8px 0 0 20px;
+  display: grid;
+  gap: 4px;
+}
+
+.doctor-summary-list li::marker {
+  color: currentColor;
+}
+
+.doctor-summary-list span {
+  color: var(--color-text-secondary);
 }
 
 /* Log Console */
@@ -611,64 +643,71 @@ body {
   font-size: 14px;
 }
 
-/* Terminal Dock */
-.terminal-dock {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: #0d0a08;
-  border-top: 2px solid var(--color-primary);
-  box-shadow: var(--shadow-dock);
-  z-index: 1000;
-  transition: transform 0.25s ease;
-}
-
-.terminal-dock.collapsed .dock-body {
-  display: none;
-}
-
-.dock-header {
+.auth-form-row {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 16px;
-  background: #14100c;
-  border-bottom: 1px solid var(--color-border-hi);
-}
-
-.dock-title {
-  display: flex;
-  align-items: center;
   gap: 10px;
+}
+
+.auth-form-row .form-input {
+  min-width: 0;
+}
+
+.eas-login-hint {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-hi);
+}
+
+.cmd-line {
+  display: inline-block;
+  margin: 6px 0;
+  padding: 6px 12px;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border-hi);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
   font-size: 13px;
-  font-weight: 700;
+  color: var(--color-text);
+  user-select: all;
+}
+
+.remote-list, .choice-list {
+  display: grid;
+  gap: 8px;
+}
+
+.remote-list {
+  margin-top: 16px;
+}
+
+.remote-list-item, .choice-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--color-border-hi);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-muted);
   color: var(--color-text);
 }
 
-.dock-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-primary);
-}
+.remote-list-item { cursor: pointer; }
+.remote-list-item input { margin-top: 4px; accent-color: var(--color-primary); }
+.remote-list-item strong, .choice-option strong { display: block; font-size: 14px; }
+.remote-list-item small, .choice-option span { display: block; margin-top: 3px; color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 11px; word-break: break-word; }
+.remote-list-item em { font-style: normal; color: var(--color-primary); font-size: 11px; }
 
-.pty-status-text {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  margin-left: 8px;
-}
-
-.dock-body {
-  height: 240px;
-  padding: 10px;
-  background: #0a0806;
-}
-
-#terminal-container {
+.choice-option {
   width: 100%;
-  height: 100%;
+  text-align: left;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.choice-option:hover, .choice-option.selected {
+  border-color: var(--color-primary);
+  background: rgba(238, 188, 1, .08);
 }
 
 /* Custom Modal Dialog */
@@ -699,8 +738,17 @@ body {
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: 480px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 24px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+.modal-body {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .modal-header {
@@ -748,4 +796,12 @@ body {
 .form-hint.err {
   color: var(--color-danger);
   margin-top: 4px;
+}
+
+@media (max-width: 560px) {
+  .app-header, .card-header { align-items: flex-start; gap: 14px; flex-direction: column; }
+  .header-status { flex-wrap: wrap; }
+  .tab-nav { overflow-x: auto; }
+  .tab-btn { white-space: nowrap; padding: 10px 14px; }
+  .auth-form-row { flex-direction: column; }
 }

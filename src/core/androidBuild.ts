@@ -31,6 +31,10 @@ export interface AndroidBuildOpts {
   logger?: Logger;
   onLine?: (line: string) => void;
   ensureKeystoreMode?: 'interactive' | 'required-existing';
+  /** Build a debug APK signed with the auto-generated debug keystore. Skips
+   *  release signing, version bump, and EAS sync — no EAS or keystore setup. */
+  debug?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface AndroidBuildResult {
@@ -40,7 +44,12 @@ export interface AndroidBuildResult {
 
 export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBuildResult> {
   const logger: Logger = opts.logger || defaultLog;
-  const task: 'assembleRelease' | 'bundleRelease' = opts.apk ? 'assembleRelease' : 'bundleRelease';
+  const debug = !!opts.debug;
+  const task: 'assembleRelease' | 'bundleRelease' | 'assembleDebug' = debug
+    ? 'assembleDebug'
+    : opts.apk
+      ? 'assembleRelease'
+      : 'bundleRelease';
   const kind = task === 'bundleRelease' ? 'AAB' : 'APK';
   const profile = opts.profile || 'production';
   const dryRun = !!opts.dryRun;
@@ -62,7 +71,7 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
     if (dryRun) {
       logger.dim(`[dry-run] would run: expo prebuild --platform android${opts.clean ? ' --clean' : ''}`);
     } else {
-      await prebuild({ cwd: opts.cwd, clean: opts.clean, onLine: opts.onLine });
+      await prebuild({ cwd: opts.cwd, clean: opts.clean, onLine: opts.onLine, signal: opts.signal });
     }
   } else {
     logger.dim('Skipping prebuild (--no-prebuild)');
@@ -77,7 +86,9 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
   }
 
   // 3/6 bump version
-  if (opts.bump !== false) {
+  if (debug) {
+    logger.dim('Skipping version bump (debug build)');
+  } else if (opts.bump !== false) {
     logger.step('3/6 bump version');
     if (dryRun) {
       logger.dim(`[dry-run] would fetch next versionCode from EAS (profile=${profile}) and write app.json + build.gradle`);
@@ -89,21 +100,26 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
   }
 
   // 4/6 ensure keystore + inject signing config
-  logger.step('4/6 ensure keystore + inject signing config');
-  if (dryRun) {
-    logger.dim('[dry-run] would ensure keystore.properties + .jks present, then inject release signingConfig into build.gradle');
+  if (debug) {
+    logger.step('4/6 signing (debug keystore)');
+    logger.dim('Debug build — signing with the auto-generated android/app/debug.keystore, no keystore.properties needed.');
   } else {
-    if (ensureMode === 'required-existing') {
-      const props = readKeystoreProps(opts.cwd);
-      if (!props) {
-        throw new Error(
-          'Signing keystore not configured (keystore.properties missing or incomplete). Please set up your keystore in the Keystore tab before building.'
-        );
-      }
+    logger.step('4/6 ensure keystore + inject signing config');
+    if (dryRun) {
+      logger.dim('[dry-run] would ensure keystore.properties + .jks present, then inject release signingConfig into build.gradle');
     } else {
-      await ensureKeystore(opts.cwd);
+      if (ensureMode === 'required-existing') {
+        const props = readKeystoreProps(opts.cwd);
+        if (!props) {
+          throw new Error(
+            'Signing keystore not configured (keystore.properties missing or incomplete). Please set up your keystore in the Keystore tab before building.'
+          );
+        }
+      } else {
+        await ensureKeystore(opts.cwd);
+      }
+      setupSigning({ cwd: opts.cwd });
     }
-    setupSigning({ cwd: opts.cwd });
   }
 
   // 5/6 gradle run
@@ -114,11 +130,13 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
     const wrapper = isWin ? 'gradlew.bat' : './gradlew';
     logger.dim(`[dry-run] would run (cwd=android/): ${wrapper} ${task}`);
   } else {
-    artifact = await gradleRun({ cwd: opts.cwd, task, onLine: opts.onLine });
+    artifact = await gradleRun({ cwd: opts.cwd, task, onLine: opts.onLine, signal: opts.signal });
   }
 
   // 6/6 sync EAS versionCode
-  if (opts.sync !== false) {
+  if (debug) {
+    logger.dim('Skipping EAS versionCode sync (debug build)');
+  } else if (opts.sync !== false) {
     logger.step('6/6 sync EAS versionCode');
     if (dryRun) {
       logger.dim('[dry-run] would POST new versionCode to api.expo.dev/graphql (non-fatal on failure)');

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { ensureGitignoreEntries } from '../util/gitignore';
 
 /** Keep in sync across init, update-scripts, and update checks. */
 export const TEMPLATE_SCRIPTS = [
@@ -73,4 +74,77 @@ export function applyScriptUpdates(scripts: ScriptStatus[]): void {
   for (const s of scripts) {
     fs.copyFileSync(s.templatePath, s.userPath);
   }
+}
+
+export interface PackageJsonScripts {
+  apk?: string;
+  aab?: string;
+}
+
+export function readPackageScripts(cwd: string): PackageJsonScripts {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+    return { apk: pkg?.scripts?.['build:android:apk'], aab: pkg?.scripts?.['build:android:aab'] };
+  } catch {
+    return {};
+  }
+}
+
+export interface ScaffoldResult {
+  wroteFiles: string[];
+  skippedFiles: string[];
+  exampleWritten: boolean;
+  packageScriptsModified: boolean;
+}
+
+/**
+ * Non-interactive core of `init`: copy the template scripts into the project,
+ * write keystore.properties.example, add build:android:apk / build:android:aab
+ * to package.json, and ensure secrets are gitignored. The interactive doctor
+ * pre-flight and keystore prompt stay CLI-only (`init`).
+ */
+export function scaffoldProject(cwd: string, force = false): ScaffoldResult {
+  const tplDir = templatesDir();
+  const scriptsDir = path.join(cwd, 'scripts');
+  fs.mkdirSync(scriptsDir, { recursive: true });
+
+  const wroteFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  for (const file of TEMPLATE_SCRIPTS) {
+    const dest = path.join(scriptsDir, file);
+    if (fs.existsSync(dest) && !force) {
+      skippedFiles.push(file);
+      continue;
+    }
+    fs.copyFileSync(path.join(tplDir, 'scripts', file), dest);
+    wroteFiles.push(file);
+  }
+
+  const examplePath = path.join(cwd, 'keystore.properties.example');
+  let exampleWritten = false;
+  if (!fs.existsSync(examplePath)) {
+    fs.copyFileSync(path.join(tplDir, 'keystore.properties.example'), examplePath);
+    exampleWritten = true;
+  }
+
+  const pkgPath = path.join(cwd, 'package.json');
+  let packageScriptsModified = false;
+  if (fs.existsSync(pkgPath)) {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    pkg.scripts = pkg.scripts || {};
+    for (const [name, value] of [
+      ['build:android:apk', 'node scripts/build.js apk'],
+      ['build:android:aab', 'node scripts/build.js aab'],
+    ] as const) {
+      if (pkg.scripts[name] && pkg.scripts[name] !== value && !force) continue;
+      if (pkg.scripts[name] === value) continue;
+      pkg.scripts[name] = value;
+      packageScriptsModified = true;
+    }
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  }
+
+  ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', 'credentials.json']);
+
+  return { wroteFiles, skippedFiles, exampleWritten, packageScriptsModified };
 }

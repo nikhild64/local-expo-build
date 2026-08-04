@@ -6,11 +6,12 @@ import { log } from '../util/log';
 
 export interface GradleRunOpts {
   cwd: string;
-  task: 'assembleRelease' | 'bundleRelease';
+  task: 'assembleRelease' | 'bundleRelease' | 'assembleDebug';
   onLine?: (line: string) => void;
+  signal?: AbortSignal;
 }
 
-export async function gradleRun({ cwd, task, onLine }: GradleRunOpts): Promise<string> {
+export async function gradleRun({ cwd, task, onLine, signal }: GradleRunOpts): Promise<string> {
   const androidDir = path.join(cwd, 'android');
   const isWin = process.platform === 'win32';
   const wrapper = isWin ? 'gradlew.bat' : './gradlew';
@@ -23,6 +24,7 @@ export async function gradleRun({ cwd, task, onLine }: GradleRunOpts): Promise<s
       cwd: androidDir,
       stdio: ['inherit', 'pipe', 'pipe'],
       shell: isWin,
+      signal,
     });
     let rl: readline.Interface | undefined;
     let rlErr: readline.Interface | undefined;
@@ -53,7 +55,9 @@ export async function gradleRun({ cwd, task, onLine }: GradleRunOpts): Promise<s
   const artifact =
     task === 'bundleRelease'
       ? path.join(androidDir, 'app', 'build', 'outputs', 'bundle', 'release', 'app-release.aab')
-      : path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
+      : task === 'assembleDebug'
+        ? path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
+        : path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
   if (fs.existsSync(artifact)) {
     log.ok(`Artifact: ${artifact}`);
   } else {

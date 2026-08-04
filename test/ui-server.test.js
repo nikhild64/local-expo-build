@@ -1,11 +1,12 @@
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const { collectDoctorChecks, setAndroidPackage } = require('../dist/commands/doctor.js');
 const { runAndroidBuild } = require('../dist/core/androidBuild.js');
-const { ALLOWLISTED_COMMANDS, PtyManager } = require('../dist/server/ptyServer.js');
+const { writeProjectIdToAppJson } = require('../dist/core/eas/link.js');
 const { startUiServer } = require('../dist/server/server.js');
 
 function tmpProject() {
@@ -83,20 +84,28 @@ describe('AndroidBuild fail-fast on missing keystore', () => {
     });
     assert.strictEqual(res.kind, 'AAB');
   });
+
+  it('runAndroidBuild debug mode in dryRun produces an APK without a keystore', async () => {
+    const res = await runAndroidBuild({
+      cwd: dir,
+      dryRun: true,
+      debug: true,
+    });
+    assert.strictEqual(res.kind, 'APK');
+  });
 });
 
-describe('PTY Command Allowlist', () => {
-  it('allowlists only specific eas commands', () => {
-    assert.ok(ALLOWLISTED_COMMANDS['eas-init']);
-    assert.ok(ALLOWLISTED_COMMANDS['eas-configure']);
-    assert.ok(ALLOWLISTED_COMMANDS['eas-credentials']);
-    assert.strictEqual(Object.keys(ALLOWLISTED_COMMANDS).length, 3);
-    assert.strictEqual(ALLOWLISTED_COMMANDS['rm-rf'], undefined);
-  });
+describe('EAS project linking', () => {
+  let dir;
+  beforeEach(() => { dir = tmpProject(); });
+  afterEach(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
 
-  it('PtyManager detects availability gracefully', () => {
-    const mgr = new PtyManager();
-    assert.strictEqual(typeof mgr.isPtyAvailable(), 'boolean');
+  it('writeProjectIdToAppJson preserves sibling Expo keys', () => {
+    writeProjectIdToAppJson(dir, 'project-id');
+    const appJson = JSON.parse(fs.readFileSync(path.join(dir, 'app.json'), 'utf8'));
+    assert.strictEqual(appJson.expo.name, 'Test App');
+    assert.strictEqual(appJson.expo.android.package, 'com.example.testapp');
+    assert.strictEqual(appJson.expo.extra.eas.projectId, 'project-id');
   });
 });
 
@@ -127,6 +136,44 @@ describe('UI HTTP Server REST endpoints', () => {
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.ok(Array.isArray(data.results));
+  });
+
+  it('serves GET /api/eas/auth with a stable unauthenticated shape', async () => {
+    const res = await fetch(`${serverInstance.url}/api/eas/auth`);
+    assert.strictEqual(res.status, 200);
+    const data = await res.json();
+    assert.strictEqual(typeof data.authenticated, 'boolean');
+  });
+
+  it('leaves an existing eas.json unchanged without invoking EAS CLI', async () => {
+    const easPath = path.join(dir, 'eas.json');
+    const initial = '{\n  "build": { "production": {} }\n}\n';
+    fs.writeFileSync(easPath, initial);
+    const response = await fetch(`${serverInstance.url}/api/eas/configure`, { method: 'POST' });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual((await response.json()).created, false);
+    assert.strictEqual(fs.readFileSync(easPath, 'utf8'), initial);
+  });
+
+  it('rejects EAS linking without a project selection', async () => {
+    const status = await new Promise((resolve, reject) => {
+      const req = http.request(`${serverInstance.url}/api/eas/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': '2', Connection: 'close' },
+      }, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      });
+      req.on('error', reject);
+      req.end('{}');
+    });
+    assert.strictEqual(status, 400);
+  });
+
+  it('rejects EAS keystore fetch before network access when unlinked', async () => {
+    const res = await fetch(`${serverInstance.url}/api/keystore/fetch-eas`, { method: 'POST' });
+    assert.strictEqual(res.status, 409);
+    assert.match((await res.json()).error, /not linked to EAS/i);
   });
 
   it('serves GET /api/keystore/status', async () => {

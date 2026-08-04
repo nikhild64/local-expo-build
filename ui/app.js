@@ -14,6 +14,8 @@
   const pillOpts = document.querySelectorAll('.pill-opt');
   const buildForm = document.getElementById('build-form');
   const btnStartBuild = document.getElementById('btn-start-build');
+  const btnStopBuild = document.getElementById('btn-stop-build');
+  const buildTimer = document.getElementById('build-timer');
   const buildErrorBanner = document.getElementById('build-error-banner');
   const logConsole = document.getElementById('log-console');
   const btnClearLog = document.getElementById('btn-clear-log');
@@ -28,6 +30,11 @@
   const btnEasInit = document.getElementById('btn-eas-init');
   const btnEasConfigure = document.getElementById('btn-eas-configure');
   const btnDoctorRehydrate = document.getElementById('btn-doctor-rehydrate');
+  const easAuthStatus = document.getElementById('eas-auth-status');
+  const easTokenForm = document.getElementById('eas-token-form');
+  const easTokenInput = document.getElementById('eas-token');
+  const btnRefreshAuth = document.getElementById('btn-refresh-auth');
+  const easLoginHint = document.getElementById('eas-login-hint');
 
   const keystoreStatusContent = document.getElementById('keystore-status-content');
   const subtabBtns = document.querySelectorAll('.subtab-btn');
@@ -42,11 +49,10 @@
   const formKsGenerate = document.getElementById('form-ks-generate');
   const btnTriggerRehydrate = document.getElementById('btn-trigger-rehydrate');
   const btnTriggerEasFetch = document.getElementById('btn-trigger-eas-fetch');
-
-  const terminalDock = document.getElementById('terminal-dock');
-  const btnDockToggle = document.getElementById('btn-dock-toggle');
-  const btnDockClear = document.getElementById('btn-dock-clear');
-  const ptyStatusText = document.getElementById('pty-status-text');
+  const easKeystoreStatus = document.getElementById('eas-keystore-status');
+  const easKeystoreList = document.getElementById('eas-keystore-list');
+  const scaffoldStatus = document.getElementById('scaffold-status');
+  const btnScaffold = document.getElementById('btn-scaffold');
 
   // Custom Modal Elements
   const modalOverlay = document.getElementById('custom-modal-overlay');
@@ -56,17 +62,19 @@
   const modalInputContainer = document.getElementById('modal-input-container');
   const modalInputField = document.getElementById('modal-input-field');
   const modalInputError = document.getElementById('modal-input-error');
+  const modalChoiceContainer = document.getElementById('modal-choice-container');
   const modalBtnCancel = document.getElementById('modal-btn-cancel');
   const modalBtnConfirm = document.getElementById('modal-btn-confirm');
 
   // Application State
   let selectedKind = 'aab';
   let isBuilding = false;
+  let buildTimerInterval = null;
+  let buildStartTime = null;
   let eventSource = null;
-  let term = null;
-  let fitAddon = null;
-  let ptyWs = null;
-  let ptyConnected = false;
+  let easAuth = null;
+  let easKeystores = [];
+  let doctorRequest = null;
 
   // ── Custom Modal Dialog Manager ──
   function showModal({
@@ -84,6 +92,8 @@
     return new Promise((resolve) => {
       modalTitle.textContent = title;
       modalMessage.textContent = message;
+      modalChoiceContainer.style.display = 'none';
+      modalChoiceContainer.innerHTML = '';
 
       // Icon badge
       modalIconBadge.className = `modal-icon-badge ${type}`;
@@ -119,23 +129,39 @@
       };
 
       modalBtnConfirm.onclick = () => {
-        if (showInput) {
-          const val = modalInputField.value.trim();
-          if (validate) {
-            const err = validate(val);
-            if (err) {
-              modalInputError.textContent = err;
-              modalInputError.style.display = 'block';
-              return;
+        try {
+          if (showInput) {
+            const val = modalInputField.value.trim();
+            if (validate) {
+              const err = validate(val);
+              if (err) {
+                modalInputError.textContent = err;
+                modalInputError.style.display = 'block';
+                return;
+              }
             }
+            cleanup();
+            resolve(val);
+          } else {
+            cleanup();
+            resolve(true);
           }
-          cleanup();
-          resolve(val);
-        } else {
-          cleanup();
-          resolve(true);
+        } catch (err) {
+          modalInputError.textContent = err?.message || 'Invalid input.';
+          modalInputError.style.display = 'block';
         }
       };
+
+      if (showInput) {
+        modalInputField.onkeydown = (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            modalBtnConfirm.click();
+          }
+        };
+      } else {
+        modalInputField.onkeydown = null;
+      }
     });
   }
 
@@ -158,6 +184,48 @@
     });
   }
 
+  function showChoiceModal({ title, message, options, confirmText = 'Select' }) {
+    return new Promise((resolve) => {
+      let selected = options.length === 1 ? options[0].value : null;
+      modalTitle.textContent = title;
+      modalMessage.textContent = message;
+      modalIconBadge.className = 'modal-icon-badge info';
+      modalIconBadge.textContent = 'ℹ';
+      modalInputContainer.style.display = 'none';
+      modalChoiceContainer.innerHTML = '';
+      modalChoiceContainer.style.display = 'grid';
+      modalBtnConfirm.textContent = confirmText;
+      modalBtnCancel.textContent = 'Cancel';
+      modalBtnCancel.style.display = 'inline-flex';
+      options.forEach((option) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'choice-option';
+        button.innerHTML = `<strong>${escapeHtml(option.label)}</strong>${option.detail ? `<span>${escapeHtml(option.detail)}</span>` : ''}`;
+        button.addEventListener('click', () => {
+          selected = option.value;
+          modalChoiceContainer.querySelectorAll('.choice-option').forEach((item) => item.classList.remove('selected'));
+          button.classList.add('selected');
+        });
+        if (selected === option.value) button.classList.add('selected');
+        modalChoiceContainer.appendChild(button);
+      });
+      modalOverlay.style.display = 'flex';
+      const cleanup = () => {
+        modalOverlay.style.display = 'none';
+        modalChoiceContainer.style.display = 'none';
+        modalBtnConfirm.onclick = null;
+        modalBtnCancel.onclick = null;
+      };
+      modalBtnCancel.onclick = () => { cleanup(); resolve(null); };
+      modalBtnConfirm.onclick = () => {
+        if (!selected) return;
+        cleanup();
+        resolve(selected);
+      };
+    });
+  }
+
   // ── Initialization ──
   function init() {
     setupTabNavigation();
@@ -165,11 +233,13 @@
     setupBuildForm();
     setupDoctorTab();
     setupKeystoreTab();
-    setupTerminalDock();
+    setupScaffoldTab();
     initSse();
     fetchStatus();
     fetchDoctor();
     fetchKeystoreStatus();
+    fetchEasAuth();
+    fetchScaffoldStatus();
   }
 
   // ── Tab Navigation ──
@@ -184,6 +254,7 @@
 
         if (targetTab === 'doctor') fetchDoctor();
         if (targetTab === 'keystore') fetchKeystoreStatus();
+        if (targetTab === 'scaffold') fetchScaffoldStatus();
       });
     });
 
@@ -241,13 +312,41 @@
       btnStartBuild.disabled = true;
       btnStartBuild.querySelector('.btn-text').textContent = 'Build in Progress...';
       btnStartBuild.querySelector('.btn-spinner').style.display = 'inline-block';
+      btnStopBuild.style.display = 'inline-flex';
+      btnStopBuild.disabled = false;
+      startBuildTimer();
     } else {
       statusPill.className = 'status-pill idle';
       statusText.textContent = 'Idle';
       btnStartBuild.disabled = false;
       btnStartBuild.querySelector('.btn-text').textContent = 'Start Local Build';
       btnStartBuild.querySelector('.btn-spinner').style.display = 'none';
+      btnStopBuild.style.display = 'none';
+      stopBuildTimer();
     }
+  }
+
+  function startBuildTimer() {
+    stopBuildTimer();
+    buildStartTime = Date.now();
+    buildTimer.textContent = '00:00';
+    buildTimer.style.display = 'inline-block';
+    buildTimerInterval = setInterval(() => {
+      if (!buildStartTime) return;
+      const elapsed = Math.floor((Date.now() - buildStartTime) / 1000);
+      const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+      const secs = String(elapsed % 60).padStart(2, '0');
+      buildTimer.textContent = `${mins}:${secs}`;
+    }, 1000);
+  }
+
+  function stopBuildTimer() {
+    if (buildTimerInterval) {
+      clearInterval(buildTimerInterval);
+      buildTimerInterval = null;
+    }
+    buildStartTime = null;
+    // keep the final time visible briefly, then hide on next build
   }
 
   // ── SSE Realtime Stream ──
@@ -280,6 +379,7 @@
     eventSource.addEventListener('build-complete', (e) => {
       const data = JSON.parse(e.data);
       setBuildingState(false);
+      btnStopBuild.textContent = 'Stop Build';
       if (data.success) {
         appendLog(`✓ Build Succeeded (${data.kind})`, 'ok');
         if (data.artifact) {
@@ -294,18 +394,13 @@
 
     eventSource.addEventListener('doctor-updated', () => {
       fetchDoctor();
+      fetchEasKeystores();
     });
 
     eventSource.addEventListener('keystore-updated', () => {
       fetchKeystoreStatus();
       fetchDoctor();
-    });
-
-    eventSource.addEventListener('pty-exit', (e) => {
-      const data = JSON.parse(e.data);
-      appendLog(`[PTY] Command "${data.commandId}" exited with code ${data.exitCode}`, 'dim');
-      fetchDoctor();
-      fetchKeystoreStatus();
+      fetchEasKeystores();
     });
 
     eventSource.onerror = () => {
@@ -338,6 +433,16 @@
       logConsole.innerHTML = '<div class="log-line dim">Log cleared.</div>';
     });
 
+    btnStopBuild.addEventListener('click', async () => {
+      btnStopBuild.disabled = true;
+      btnStopBuild.textContent = 'Stopping...';
+      try {
+        await fetch('/api/build/stop', { method: 'POST' });
+      } catch {
+        // ignore — the build-complete SSE will reset state
+      }
+    });
+
     buildForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       buildErrorBanner.style.display = 'none';
@@ -345,6 +450,7 @@
       const payload = {
         apk: selectedKind === 'apk',
         aab: selectedKind === 'aab',
+        debug: document.getElementById('opt-debug').checked,
         profile: document.getElementById('build-profile').value || 'production',
         clean: document.getElementById('opt-clean').checked,
         bump: !document.getElementById('opt-no-bump').checked,
@@ -413,13 +519,10 @@
       }
     });
 
-    btnEasInit.addEventListener('click', () => {
-      openPtyAndRun('eas-init');
-    });
-
-    btnEasConfigure.addEventListener('click', () => {
-      openPtyAndRun('eas-configure');
-    });
+    btnEasInit.addEventListener('click', linkEasProject);
+    btnEasConfigure.addEventListener('click', configureEas);
+    btnRefreshAuth.addEventListener('click', fetchEasAuth);
+    easTokenForm.addEventListener('submit', submitEasToken);
 
     btnDoctorRehydrate.addEventListener('click', async () => {
       try {
@@ -439,36 +542,67 @@
   }
 
   async function fetchDoctor() {
-    try {
-      doctorSummaryBanner.className = 'alert info margin-bottom';
-      doctorSummaryBanner.textContent = 'Checking environment dependencies...';
+    if (doctorRequest) return doctorRequest;
+    doctorRequest = (async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      try {
+        setDoctorLoading(true);
+        doctorSummaryBanner.className = 'alert info margin-bottom';
+        doctorSummaryBanner.textContent = 'Checking environment dependencies...';
 
-      const res = await fetch('/api/doctor');
-      if (!res.ok) {
+        const res = await fetch('/api/doctor', { signal: controller.signal });
+        if (!res.ok) {
+          doctorSummaryBanner.className = 'alert danger margin-bottom';
+          doctorSummaryBanner.textContent = 'Failed to fetch doctor checks.';
+          return;
+        }
+
+        const summary = await res.json();
+        renderDoctorResults(summary);
+      } catch (err) {
         doctorSummaryBanner.className = 'alert danger margin-bottom';
-        doctorSummaryBanner.textContent = 'Failed to fetch doctor checks.';
-        return;
+        doctorSummaryBanner.textContent = err.name === 'AbortError'
+          ? 'Doctor checks timed out after 30 seconds. Click Refresh Doctor to retry.'
+          : `Error: ${err.message}`;
+      } finally {
+        clearTimeout(timeout);
+        doctorRequest = null;
+        btnRefreshDoctor.disabled = false;
       }
+    })();
+    return doctorRequest;
+  }
 
-      const summary = await res.json();
-      renderDoctorResults(summary);
-    } catch (err) {
-      doctorSummaryBanner.className = 'alert danger margin-bottom';
-      doctorSummaryBanner.textContent = `Error: ${err.message}`;
-    }
+  function setDoctorLoading(isLoading) {
+    btnRefreshDoctor.disabled = isLoading;
+    if (!isLoading) return;
+    doctorActionsBar.style.display = 'none';
+    doctorGrid.innerHTML = '';
   }
 
   function renderDoctorResults(summary) {
-    const { results, capabilities } = summary;
+    setDoctorLoading(false);
+    const { capabilities } = summary;
+    // The browser UI currently supports Android builds only. Keep iOS diagnostics
+    // available to the CLI doctor command, but do not surface them here.
+    const results = summary.results.filter((check) => check.name !== 'iOS build prerequisites');
     const failed = results.filter((r) => !r.ok);
     const warnings = results.filter((r) => r.ok && r.warn);
 
     if (failed.length > 0) {
       doctorSummaryBanner.className = 'alert danger margin-bottom';
-      doctorSummaryBanner.textContent = `⚠️ ${failed.length} check(s) failing. Review recommendations below.`;
+      renderDoctorSummary(
+        `⚠️ ${failed.length} check(s) failing. Fix these before building:`,
+        failed,
+        warnings
+      );
     } else if (warnings.length > 0) {
       doctorSummaryBanner.className = 'alert info margin-bottom';
-      doctorSummaryBanner.textContent = `✓ Core setup ready (${warnings.length} notice/warning item).`;
+      renderDoctorSummary(
+        `✓ Core setup ready. ${warnings.length} notice/warning item${warnings.length === 1 ? '' : 's'} to review:`,
+        warnings
+      );
     } else {
       doctorSummaryBanner.className = 'alert ok margin-bottom';
       doctorSummaryBanner.textContent = '✓ Environment checks passed! You are ready to build.';
@@ -510,6 +644,30 @@
       `;
       doctorGrid.appendChild(card);
     });
+  }
+
+  function renderDoctorSummary(message, primaryChecks, secondaryWarnings = []) {
+    doctorSummaryBanner.replaceChildren();
+    const heading = document.createElement('strong');
+    heading.textContent = message;
+    doctorSummaryBanner.appendChild(heading);
+
+    const checks = [...primaryChecks, ...secondaryWarnings];
+    const list = document.createElement('ul');
+    list.className = 'doctor-summary-list';
+    checks.forEach((check) => {
+      const item = document.createElement('li');
+      const name = document.createElement('strong');
+      name.textContent = check.name;
+      item.appendChild(name);
+      if (check.detail) {
+        const detail = document.createElement('span');
+        detail.textContent = ` — ${check.detail}`;
+        item.appendChild(detail);
+      }
+      list.appendChild(item);
+    });
+    doctorSummaryBanner.appendChild(list);
   }
 
   // ── Keystore Tab ──
@@ -650,10 +808,177 @@
       }
     });
 
-    // Trigger EAS Fetch
-    btnTriggerEasFetch.addEventListener('click', () => {
-      openPtyAndRun('eas-credentials');
-    });
+    btnTriggerEasFetch.addEventListener('click', fetchEasKeystore);
+  }
+
+  async function apiRequest(url, options = {}, retryAuth = true) {
+    const res = await fetch(url, options);
+    let data = {};
+    try { data = await res.json(); } catch { /* empty response */ }
+    if (res.status === 401 && retryAuth && await requestEasToken()) {
+      return apiRequest(url, options, false);
+    }
+    return { res, data };
+  }
+
+  async function requestEasToken() {
+    const token = await showPrompt(
+      'EAS authentication required',
+      'Paste an Expo access token to continue. It is kept only in this local server process.',
+      '',
+      'Expo access token',
+      (value) => value ? null : 'An access token is required.'
+    );
+    if (!token) return false;
+    return authenticateEasToken(token);
+  }
+
+  async function authenticateEasToken(token) {
+    try {
+      const { res, data } = await apiRequest('/api/eas/auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
+      }, false);
+      if (!res.ok) {
+        await showAlert('Unable to authenticate', data.error || 'The access token was rejected.', 'error');
+        return false;
+      }
+      easTokenInput.value = '';
+      easAuth = data;
+      renderEasAuth();
+      return true;
+    } catch (err) {
+      await showAlert('Authentication error', err.message, 'error');
+      return false;
+    }
+  }
+
+  async function submitEasToken(event) {
+    event.preventDefault();
+    const token = easTokenInput.value.trim();
+    if (token) await authenticateEasToken(token);
+  }
+
+  async function fetchEasAuth() {
+    try {
+      const { res, data } = await apiRequest('/api/eas/auth', {}, false);
+      easAuth = res.ok ? data : { authenticated: false, source: 'none' };
+      renderEasAuth();
+      if (easAuth.authenticated) fetchEasKeystores();
+    } catch {
+      easAuth = { authenticated: false, source: 'none' };
+      renderEasAuth();
+    }
+  }
+
+  function renderEasAuth() {
+    if (easAuth && easAuth.authenticated) {
+      const accountNames = (easAuth.accounts || []).map((account) => account.name).join(', ');
+      easAuthStatus.textContent = `Connected as ${easAuth.username}${accountNames ? ` · ${accountNames}` : ''}`;
+      easTokenForm.style.display = 'none';
+      if (easLoginHint) easLoginHint.style.display = 'none';
+    } else {
+      easAuthStatus.textContent = 'Connect an Expo access token to link projects and fetch EAS credentials.';
+      easTokenForm.style.display = 'block';
+      if (easLoginHint) easLoginHint.style.display = 'block';
+    }
+  }
+
+  async function linkEasProject() {
+    const originalText = btnEasInit.textContent;
+    btnEasInit.disabled = true;
+    try {
+      if (!easAuth?.authenticated && !await requestEasToken()) return;
+      const accounts = easAuth.accounts || [];
+      if (!accounts.length) return showAlert('No EAS accounts', 'The authenticated account has no available EAS accounts.', 'error');
+      const accountId = await showChoiceModal({
+        title: 'Select EAS account', message: 'Choose where the project is managed.',
+        options: accounts.map((account) => ({ value: account.id, label: account.name, detail: account.id })),
+        confirmText: 'Continue',
+      });
+      if (!accountId) return;
+      const account = accounts.find((item) => item.id === accountId);
+      btnEasInit.textContent = 'Loading EAS projects…';
+      const { res, data } = await apiRequest(`/api/eas/projects?account=${encodeURIComponent(account.name)}`);
+      if (!res.ok) return showAlert('Could not load projects', data.error || 'Please try again.', 'error');
+      const projects = Array.isArray(data.projects) ? data.projects : [];
+      const options = projects.map((project) => ({ value: project.id, label: project.fullName || project.name, detail: project.slug || project.id }));
+      options.push({ value: '__create__', label: 'Create a new EAS project', detail: `in ${account.name}` });
+      const projectId = await showChoiceModal({ title: 'Link EAS project', message: 'Select an existing project or create one.', options });
+      if (!projectId) return;
+      let payload;
+      if (projectId === '__create__') {
+        const projectName = await showPrompt('Create EAS project', 'Enter a project name.', '', 'my-app', (value) => {
+          if (!value) return 'A project name is required.';
+          if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value)) return 'Use letters, numbers, dots, underscores, and hyphens; start with a letter or number.';
+          return null;
+        });
+        if (!projectName) return;
+        payload = { accountId, projectName };
+      } else {
+        payload = { projectId };
+      }
+      const requestLink = (body) => apiRequest('/api/eas/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      let result = await requestLink(payload);
+      if (result.res.status === 409 && /already linked/i.test(result.data.error || '')) {
+        const confirmed = await showModal({ title: 'Replace EAS project link?', message: result.data.error, type: 'info', confirmText: 'Replace link', showCancel: true });
+        if (!confirmed) return;
+        result = await requestLink({ ...payload, overwrite: true });
+      }
+      if (!result.res.ok) return showAlert('Could not link project', result.data.error || 'Please try again.', 'error');
+      await showAlert('EAS project linked', `Project ${result.data.projectId} is now linked.`, 'success');
+      fetchDoctor(); fetchEasKeystores();
+    } catch (err) {
+      await showAlert('Could not link EAS project', err.message || 'A network error occurred while contacting EAS.', 'error');
+    } finally {
+      btnEasInit.disabled = false;
+      btnEasInit.textContent = originalText;
+    }
+  }
+
+  async function configureEas() {
+    const { res, data } = await apiRequest('/api/eas/configure', { method: 'POST' });
+    if (!res.ok) return showAlert('Could not create eas.json', data.error || 'Please try again.', 'error');
+    await showAlert('EAS configured', data.created ? 'EAS CLI generated eas.json for Android.' : 'eas.json already exists and was left unchanged.', 'success');
+    fetchDoctor();
+  }
+
+  async function fetchEasKeystores() {
+    easKeystoreStatus.textContent = 'Loading EAS Android keystores...';
+    const { res, data } = await apiRequest('/api/eas/keystores');
+    if (!res.ok) {
+      easKeystores = [];
+      easKeystoreList.innerHTML = '';
+      easKeystoreStatus.textContent = data.error || 'Link an EAS project and authenticate to list stored keystores.';
+      return;
+    }
+    easKeystores = data.keystores || [];
+    renderEasKeystores();
+  }
+
+  function renderEasKeystores() {
+    if (!easKeystores.length) {
+      easKeystoreStatus.textContent = 'No Android keystores are stored for this EAS project.';
+      easKeystoreList.innerHTML = '';
+      return;
+    }
+    easKeystoreStatus.textContent = 'Choose the Android build credentials to fetch.';
+    easKeystoreList.innerHTML = easKeystores.map((store) => `<label class="remote-list-item"><input type="radio" name="eas-keystore" value="${escapeHtml(store.buildCredentialsId)}" ${store.isDefault ? 'checked' : ''}><span><strong>${escapeHtml(store.name)}</strong>${store.isDefault ? ' <em>Default</em>' : ''}<small>${escapeHtml(store.keyAlias || 'No alias')} · ${escapeHtml(store.type)}${store.applicationIdentifier ? ` · ${escapeHtml(store.applicationIdentifier)}` : ''}</small></span></label>`).join('');
+  }
+
+  async function fetchEasKeystore() {
+    if (!easKeystores.length) await fetchEasKeystores();
+    const selection = document.querySelector('input[name="eas-keystore"]:checked');
+    if (!selection) return showAlert('No EAS keystore selected', 'Choose a keystore to fetch first.', 'error');
+    const fetchStore = async (overwrite) => apiRequest('/api/keystore/fetch-eas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ buildCredentialsId: selection.value, overwrite }) });
+    let result = await fetchStore(false);
+    if (result.res.status === 409 && /Confirm replacement|already exists/i.test(result.data.error || '')) {
+      const confirmed = await showModal({ title: 'Replace local keystore?', message: result.data.error, type: 'info', confirmText: 'Replace', showCancel: true });
+      if (!confirmed) return;
+      result = await fetchStore(true);
+    }
+    if (!result.res.ok) return showAlert('Could not fetch keystore', result.data.error || 'Please try again.', 'error');
+    await showAlert('Keystore fetched', `Saved ${result.data.storeFile} with alias ${result.data.keyAlias}.`, 'success');
+    fetchKeystoreStatus(); fetchDoctor();
   }
 
   function updateSelectedFileName() {
@@ -699,127 +1024,80 @@
     }
   }
 
-  // ── Terminal Dock & Web PTY ──
-  function setupTerminalDock() {
-    btnDockToggle.addEventListener('click', () => {
-      terminalDock.classList.toggle('collapsed');
-      if (!terminalDock.classList.contains('collapsed') && fitAddon) {
-        setTimeout(() => fitAddon.fit(), 100);
-      }
-      btnDockToggle.textContent = terminalDock.classList.contains('collapsed')
-        ? 'Expand Terminal'
-        : 'Collapse Terminal';
-    });
-
-    btnDockClear.addEventListener('click', () => {
-      if (term) term.clear();
-    });
-
-    window.addEventListener('resize', () => {
-      if (fitAddon && !terminalDock.classList.contains('collapsed')) {
-        fitAddon.fit();
-      }
-    });
+  // ── Scaffold Tab ──
+  function setupScaffoldTab() {
+    btnScaffold.addEventListener('click', scaffoldProjectAction);
   }
 
-  function ensureTerminalInitialized() {
-    if (term) return;
-
-    term = new window.Terminal({
-      cursorBlink: true,
-      theme: {
-        background: '#0a0806',
-        foreground: '#ece5d6',
-        cursor: '#f0824e',
-        selectionBackground: 'rgba(240, 130, 78, 0.3)',
-      },
-      fontFamily: '"JetBrains Mono", monospace',
-      fontSize: 13,
-    });
-
-    fitAddon = new window.FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(document.getElementById('terminal-container'));
-    fitAddon.fit();
-
-    term.onData((data) => {
-      if (ptyWs && ptyWs.readyState === WebSocket.OPEN) {
-        ptyWs.send(JSON.stringify({ type: 'input', data }));
-      }
-    });
+  async function fetchScaffoldStatus() {
+    try {
+      const res = await fetch('/api/scaffold/status');
+      if (!res.ok) throw new Error('Non-OK response');
+      const data = await res.json();
+      renderScaffoldStatus(data);
+    } catch {
+      scaffoldStatus.innerHTML = '<div class="alert danger">Could not load scaffold status.</div>';
+    }
   }
 
-  function openPtyAndRun(commandId) {
-    terminalDock.classList.remove('collapsed');
-    btnDockToggle.textContent = 'Collapse Terminal';
-    ensureTerminalInitialized();
-    term.focus();
-    if (fitAddon) fitAddon.fit();
-
-    connectPtyWebSocket(commandId);
+  function renderScaffoldStatus(data) {
+    const existing = (data.scripts || []).filter((s) => s.exists);
+    const texts = data.scripts ? data.scripts.map((s) => (s.exists ? `<strong>${escapeHtml(s.name)}</strong>` : escapeHtml(s.name))).join(' · ') : '';
+    const pkg = data.pkgScripts || {};
+    let html = `<div class="alert ${data.hasScripts ? 'ok' : 'info'} margin-bottom"><strong>${data.hasScripts ? `${existing.length} scaffolded script(s) present` : 'No scaffolded scripts yet'}</strong></div>`;
+    html += `<div class="status-content"><p>Scripts: ${texts || 'none'}</p>`;
+    html += `<div class="form-row"><div><strong>build:android:apk:</strong> <code>${escapeHtml(pkg.apk || 'not set')}</code></div><div><strong>build:android:aab:</strong> <code>${escapeHtml(pkg.aab || 'not set')}</code></div></div></div>`;
+    scaffoldStatus.innerHTML = html;
   }
 
-  function connectPtyWebSocket(commandId) {
-    if (ptyWs) {
-      try {
-        ptyWs.close();
-      } catch {
-        // ignore
+  async function scaffoldProjectAction() {
+    let hasScripts = true;
+    try {
+      const statusRes = await fetch('/api/scaffold/status');
+      if (statusRes.ok) {
+        hasScripts = !!(await statusRes.json()).hasScripts;
       }
-      ptyWs = null;
+    } catch {
+      // default to showing the choice if status is unavailable
     }
 
-    const loc = window.location;
-    const wsProtocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${loc.host}/pty`;
-
-    ptyStatusText.textContent = 'Connecting...';
-    ptyWs = new WebSocket(wsUrl);
-
-    ptyWs.onopen = () => {
-      ptyConnected = true;
-      ptyStatusText.textContent = `Running ${commandId}`;
-      term.writeln(`\r\n\x1b[33m--- Launching allowlisted command: ${commandId} ---\x1b[0m\r\n`);
-
-      const dims = fitAddon ? fitAddon.proposeDimensions() : { cols: 80, rows: 24 };
-      ptyWs.send(
-        JSON.stringify({
-          type: 'start',
-          command: commandId,
-          cols: dims ? dims.cols : 80,
-          rows: dims ? dims.rows : 24,
-        })
-      );
-    };
-
-    ptyWs.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'output') {
-          term.write(msg.data);
-        } else if (msg.type === 'exit') {
-          term.writeln(`\r\n\x1b[32m[Process exited with code ${msg.exitCode}]\x1b[0m\r\n`);
-          ptyStatusText.textContent = 'Idle';
-        } else if (msg.type === 'pty-unavailable') {
-          term.writeln(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
-          ptyStatusText.textContent = 'PTY Unavailable';
-        } else if (msg.type === 'error') {
-          term.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m\r\n`);
-          ptyStatusText.textContent = 'Error';
-        }
-      } catch {
-        term.write(event.data);
+    let choice = 'keep';
+    if (hasScripts) {
+      choice = await showChoiceModal({
+        title: 'Scaffold local build scripts',
+        message: 'Scaffolded scripts already exist. How should we handle them?',
+        options: [
+          { value: 'keep', label: 'Scaffold (keep existing files)', detail: 'Adds missing scripts + npm entries only' },
+          { value: 'overwrite', label: 'Scaffold & overwrite', detail: 'Replaces existing scripts/*.js and npm scripts' },
+        ],
+        confirmText: 'Continue',
+      });
+    }
+    if (!choice) return;
+    try {
+      const res = await fetch('/api/scaffold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: choice === 'overwrite' }),
+      });
+      const data = await res.json();
+      if (!res.ok) return showAlert('Scaffold failed', data.error || 'Please try again.', 'error');
+      let msg = `Scaffolded ${data.wroteFiles.length} script(s).`;
+      if (data.skippedFiles && data.skippedFiles.length) {
+        msg += ` Skipped ${data.skippedFiles.length} existing file(s).`;
       }
-    };
-
-    ptyWs.onclose = () => {
-      ptyConnected = false;
-      ptyStatusText.textContent = 'Disconnected';
-    };
-
-    ptyWs.onerror = () => {
-      ptyStatusText.textContent = 'Connection Error';
-    };
+      await showAlert('Scaffold complete', msg, 'success');
+      fetchScaffoldStatus();
+      fetchDoctor();
+      await showModal({
+        title: 'Now build from the terminal',
+        message: 'npm run build:android:aab   (or: npm run build:android:apk)',
+        type: 'info',
+        confirmText: 'OK',
+      });
+    } catch (err) {
+      await showAlert('Error', err.message, 'error');
+    }
   }
 
   function escapeHtml(str) {

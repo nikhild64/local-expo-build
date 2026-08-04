@@ -85,7 +85,7 @@ local-expo-build doctor                     Env check + interactive auto-fix wiz
 local-expo-build ui [--port <n>] [--no-open]
                                             Launch local browser UI (localhost only)
                                             for Android builds, Doctor, Keystore,
-                                            multipart upload, and embedded PTY.
+                                            multipart upload, and one-click EAS actions.
 
 # ── Android (stable) ──
 local-expo-build build android [--apk|--aab] [--profile <name>]
@@ -120,15 +120,17 @@ local-expo-build update-scripts [-y|--yes]
 Launch a lightweight local web interface running on your machine:
 
 ```bash
-npx local-expo-build ui [--port 3847] [--no-open]
+npx local-expo-build ui [--port 3847] [--no-open] [--logs]
 ```
 
 - **Security Boundary**: Binds strictly to `127.0.0.1` (localhost only).
 - **Chai Visual Theme**: Dark canvas (`#14100c`), warm accent (`#f0824e`), Nunito + JetBrains Mono typography.
 - **Build Tab**: Trigger APK/AAB builds, configure flags (`--clean`, `--no-bump`, `--no-sync`), and view live streaming build logs via SSE.
-- **Doctor Tab**: View environment diagnostics cards and trigger 1-click fixes (package name, `eas init`, `eas build:configure`, keystore rehydration).
+- **Doctor Tab**: View environment diagnostics cards and trigger 1-click fixes (package name, EAS project linking, `eas.json` creation, and keystore rehydration).
 - **Keystore Wizard & Upload**: Upload `.jks` files directly via multipart drag-and-drop, import paths, generate new keypairs via `keytool`, or rehydrate from `credentials.json`.
-- **Embedded Web Terminal**: Interactive `eas` CLI commands in your browser powered by xterm.js and WebSocket PTY. Allowlisted to `eas init`, `eas build:configure`, and `eas credentials` for security. Falling back to host terminal if `@lydell/node-pty` native binaries are missing.
+- **One-click EAS actions**: Link an EAS project, generate `eas.json` through `eas build:configure`, and fetch Android signing credentials directly from Expo's API. Authentication uses `EXPO_TOKEN`, an existing `eas login` session, or a token pasted into the local UI (held only in memory).
+- **`--logs`**: Mirrors safe UI-server lifecycle and Android build output to the terminal. Credential-like values and large base64 blobs are redacted.
+- **Scaffold tab**: Drops the reusable, committable `scripts/*.js` + `build:android:aab` / `build:android:apk` npm scripts into your project (same as `npx local-expo-build init`), then you build from the terminal with `npm run build:android:aab`.
 ```
 
 Global flags: `--cwd <path>`, `--verbose`, `--dry-run`.

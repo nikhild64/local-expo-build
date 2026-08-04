@@ -626,8 +626,10 @@ export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSumma
 
   const canFixAndroidPackage =
     androidPkg.source === 'app.json' && (androidPkg.pkg === null || !ANDROID_PKG_RE.test(androidPkg.pkg));
-  const canEasInit = !!eas && easLink.kind !== 'linked' && easLink.kind !== 'no-expo-config';
-  const canEasConfigure = !!eas && easLink.kind === 'linked' && !easLink.hasEasJson;
+  // The browser UI uses Expo's GraphQL API directly, so its EAS actions do not
+  // require the optional eas-cli executable to be installed.
+  const canEasInit = easLink.kind !== 'linked' && easLink.kind !== 'no-expo-config';
+  const canEasConfigure = easLink.kind === 'linked' && !easLink.hasEasJson;
   const rehydrateAvailable = !!findRehydrateCandidate(cwd);
   const canSetupKeystore = !ksProps.fileExists || !ksProps.props;
   const easReady = isEasReady(easLink);

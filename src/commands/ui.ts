@@ -18,9 +18,10 @@ export function openBrowser(url: string): void {
 export function registerUiCommand(program: Command): void {
   program
     .command('ui')
-    .description('Launch local browser UI for Android builds, Doctor, Keystore, and embedded web terminal')
+    .description('Launch local browser UI for Android builds, Doctor, Keystore, and one-click EAS actions')
     .option('--port <number>', 'port for local web server', '3847')
     .option('--no-open', 'do not auto-open the browser')
+    .option('--logs', 'mirror safe UI server and Android build logs to this terminal')
     .action(async (opts, cmd) => {
       const ctx = getCtx(cmd);
       const port = parseInt(opts.port, 10) || 3847;
@@ -32,6 +33,7 @@ export function registerUiCommand(program: Command): void {
         cwd: ctx.cwd,
         port,
         dryRun: ctx.dryRun,
+        logs: !!opts.logs,
       });
 
       if (opts.open !== false) {
@@ -40,6 +42,7 @@ export function registerUiCommand(program: Command): void {
       }
 
       log.dim('Press Ctrl+C to stop the UI server.');
+      if (opts.logs) log.dim('Terminal log mirroring enabled (credentials and tokens are redacted).');
 
       // Keep Node process running until SIGINT / SIGTERM
       await new Promise<void>((resolve) => {

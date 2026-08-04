@@ -1,24 +1,7 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
-import https from 'https';
 import { log } from '../util/log';
-
-const EAS_API = 'api.expo.dev';
-
-function getSessionSecret(): { token?: string; sessionSecret?: string } {
-  if (process.env.EXPO_TOKEN) return { token: process.env.EXPO_TOKEN };
-  const statePath = path.join(os.homedir(), '.expo', 'state.json');
-  if (!fs.existsSync(statePath)) {
-    throw new Error(
-      'No EXPO_TOKEN env var and no ~/.expo/state.json found. Run `eas login` first.'
-    );
-  }
-  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  const secret = state?.auth?.sessionSecret;
-  if (!secret) throw new Error('No sessionSecret in ~/.expo/state.json. Run `eas login` first.');
-  return { sessionSecret: secret };
-}
+import { easGraphql } from './eas/api';
 
 export interface SyncEasVersionOpts {
   cwd: string;
@@ -45,8 +28,6 @@ export async function syncEasVersion({ cwd }: SyncEasVersionOpts): Promise<void>
   }
   if (!applicationId) throw new Error('Missing expo.android.package in app.json');
 
-  const auth = getSessionSecret();
-
   const mutation = `
     mutation CreateAppVersionMutation($appVersionInput: AppVersionInput!) {
       appVersion {
@@ -62,36 +43,7 @@ export async function syncEasVersion({ cwd }: SyncEasVersionOpts): Promise<void>
       buildVersion: String(versionCode),
     },
   };
-  const body = JSON.stringify({ query: mutation, variables });
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Content-Length': String(Buffer.byteLength(body)),
-    'expo-client-info': JSON.stringify({ appVersion: '0.0.0', sdkVersion: '0.0.0' }),
-  };
-  if (auth.sessionSecret) headers['expo-session'] = auth.sessionSecret;
-  if (auth.token) headers['authorization'] = `Bearer ${auth.token}`;
-
   log.info(`Syncing EAS versionCode → ${versionCode} (appId: ${projectId})`);
-  await new Promise<void>((resolve, reject) => {
-    const req = https.request(
-      { hostname: EAS_API, path: '/graphql', method: 'POST', headers },
-      (res) => {
-        let data = '';
-        res.on('data', (c) => (data += c));
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            if (json.errors) return reject(new Error(`EAS API: ${JSON.stringify(json.errors)}`));
-            log.ok(`EAS remote versionCode set to ${versionCode}`);
-            resolve();
-          } catch {
-            reject(new Error(`Failed to parse EAS response: ${data}`));
-          }
-        });
-      }
-    );
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
+  await easGraphql(mutation, variables);
+  log.ok(`EAS remote versionCode set to ${versionCode}`);
 }

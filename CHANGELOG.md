@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Local Browser UI (`npx local-expo-build ui`).** Interactive local web interface running at `http://127.0.0.1:3847` (localhost only) for Android builds (APK/AAB), Doctor environment checks & auto-fixes, Keystore management, multipart `.jks` uploads, and allowlisted interactive `eas` subcommands in an embedded web terminal dock (xterm.js + WS PTY).
+- **Direct EAS browser actions.** The local UI can now link an EAS project, create `eas.json`, and fetch Android keystores directly from Expo's GraphQL API. Browser keystore fetch no longer requires the manual `eas credentials` download followed by `keystore import` round-trip.
 - **Multipart `.jks` Uploads.** Direct `.jks` keystore file uploads via busboy multipart parser in the web interface.
-- **Embedded Web Terminal Dock.** Interactive xterm.js PTY shell supporting allowlisted `eas` subcommands (`eas init`, `eas build:configure`, `eas credentials`).
 - **Non-interactive Keystore & Build Core APIs.** Extracted `runAndroidBuild`, `collectDoctorChecks`, and param-driven keystore setup functions (`generateKeystore`, `importExistingKeystore`, `rehydrateFromCredentialsJson`).
+
+### Changed
+
+- Removed the browser PTY/xterm terminal and its `ws` and optional `@lydell/node-pty` dependencies. The UI no longer ships vendored xterm assets or exposes a local process-spawn surface.
 
 ## [0.4.3] — 2026-06-30
 

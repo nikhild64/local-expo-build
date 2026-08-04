@@ -4,7 +4,6 @@ import path from 'path';
 import os from 'os';
 import net from 'net';
 import Busboy from 'busboy';
-import { WebSocketServer } from 'ws';
 import { log } from '../util/log';
 import { runAndroidBuild } from '../core/androidBuild';
 import { collectDoctorChecks, setAndroidPackage, rehydrateKeystore } from '../commands/doctor';
@@ -16,13 +15,19 @@ import {
   findRehydrateCandidate,
 } from '../core/keystore';
 import { detectEasLink, isEasReady } from '../core/easLink';
-import { PtyManager } from './ptyServer';
+import { readExpoConfig } from '../core/expoConfig';
+import { EasApiError, EasAuth, resolveEasAuth } from '../core/eas/api';
+import { EAS_PROJECT_NAME, createProject, getEasViewer, listProjects, writeProjectIdToAppJson } from '../core/eas/link';
+import { configureEasProject } from '../core/eas/configure';
+import { fetchEasKeystore, listEasKeystores } from '../core/keystore/easApiFetch';
+import { compareScripts, readPackageScripts, scaffoldProject } from '../core/scaffoldScripts';
 
 export interface UiServerOpts {
   cwd: string;
   port?: number;
   dryRun?: boolean;
   openBrowser?: boolean;
+  logs?: boolean;
 }
 
 export interface UiServerInstance {
@@ -54,10 +59,31 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
   const preferredPort = opts.port || 3847;
   const actualPort = await findAvailablePort(preferredPort);
   const dryRun = !!opts.dryRun;
+  const terminalLogs = !!opts.logs;
 
   let activeBuild: { status: 'building'; startedAt: string } | null = null;
+  let buildAbort: AbortController | null = null;
+  let activeEasOperation = false;
+  let pastedEasAuth: EasAuth | null = null;
   const sseClients: Set<ServerResponse> = new Set();
-  const ptyManager = new PtyManager();
+
+  const currentEasAuth = (): EasAuth | null => pastedEasAuth || resolveEasAuth();
+  const redactLogLine = (message: string): string =>
+    message
+      .replace(/(authorization|expo-session|token|password|keyPassword|storePassword)\s*[=:]\s*\S+/gi, '$1=[REDACTED]')
+      .replace(/[A-Za-z0-9+/]{512,}={0,2}/g, '[REDACTED_BASE64]');
+  const serverLog = (message: string) => {
+    if (terminalLogs) log.info(`[ui] ${redactLogLine(message)}`);
+  };
+  const withEasOperation = async <T>(operation: () => Promise<T> | T): Promise<T> => {
+    if (activeEasOperation) {
+      const err: any = new Error('Another EAS operation is already in progress.');
+      err.status = 409;
+      throw err;
+    }
+    activeEasOperation = true;
+    try { return await operation(); } finally { activeEasOperation = false; }
+  };
 
   const broadcastSse = (event: string, data: any) => {
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -127,7 +153,6 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
               port: actualPort,
               dryRun,
               buildStatus: activeBuild ? 'building' : 'idle',
-              ptyAvailable: ptyManager.isPtyAvailable(),
               easReady: isEasReady(easLink),
               keystoreProps: readKeystoreProps(cwd),
             })
@@ -136,10 +161,104 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
         }
 
         if (req.method === 'GET' && pathname === '/api/doctor') {
+          serverLog('Running Doctor checks');
           const summary = await collectDoctorChecks(cwd);
           res.writeHead(200);
           res.end(JSON.stringify(summary));
           return;
+        }
+
+        if (req.method === 'GET' && pathname === '/api/eas/auth') {
+          const auth = currentEasAuth();
+          if (!auth) {
+            res.writeHead(200);
+            res.end(JSON.stringify({ authenticated: false, source: 'none' }));
+            return;
+          }
+          try {
+            const viewer = await getEasViewer(auth);
+            res.writeHead(200);
+            res.end(JSON.stringify({ authenticated: true, username: viewer.username, accounts: viewer.accounts, source: 'token' in auth ? 'token' : 'session' }));
+          } catch (err) {
+            if (err instanceof EasApiError && err.isAuthError) pastedEasAuth = null;
+            throw err;
+          }
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/eas/auth') {
+          const body = await parseJsonBody(req);
+          if (typeof body.token !== 'string' || !body.token.trim()) {
+            res.writeHead(400); res.end(JSON.stringify({ error: 'token is required' })); return;
+          }
+          const auth: EasAuth = { token: body.token.trim() };
+          const viewer = await getEasViewer(auth);
+          pastedEasAuth = auth;
+          res.writeHead(200);
+          res.end(JSON.stringify({ authenticated: true, username: viewer.username, accounts: viewer.accounts, source: 'token' }));
+          return;
+        }
+
+        if (req.method === 'GET' && pathname === '/api/eas/projects') {
+          const account = parsedUrl.searchParams.get('account');
+          if (!account) { res.writeHead(400); res.end(JSON.stringify({ error: 'account is required' })); return; }
+          const projects = await listProjects(account, currentEasAuth());
+          res.writeHead(200); res.end(JSON.stringify({ projects })); return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/eas/link') {
+          serverLog('Linking EAS project');
+          const body = await parseJsonBody(req);
+          if (typeof body.projectId !== 'string' && !(typeof body.accountId === 'string' && typeof body.projectName === 'string')) {
+            res.writeHead(400); res.end(JSON.stringify({ error: 'projectId or accountId and projectName are required' })); return;
+          }
+          const link = detectEasLink(cwd);
+          const config = readExpoConfig(cwd);
+          if (link.kind === 'dynamic-unreadable' || config?.source === 'dynamic') {
+            const projectId = typeof body.projectId === 'string' ? body.projectId : '<EAS_PROJECT_ID>';
+            res.writeHead(409);
+            res.end(JSON.stringify({ error: `Your project uses app.config.js, so app.json cannot be updated safely. Add this to your config: extra: { ...config.extra, eas: { ...config.extra?.eas, projectId: '${projectId}' } }` }));
+            return;
+          }
+          const result = await withEasOperation(async () => {
+            let projectId = body.projectId;
+            if (!projectId) {
+              if (!EAS_PROJECT_NAME.test(body.projectName)) throw new Error('Project name must start with a letter or number and contain only letters, numbers, dots, underscores, or hyphens.');
+              projectId = (await createProject(body.accountId, body.projectName, currentEasAuth())).id;
+            }
+            writeProjectIdToAppJson(cwd, projectId, body.overwrite === true);
+            return { projectId };
+          });
+          broadcastSse('doctor-updated', {});
+          serverLog(`EAS project linked (${result.projectId})`);
+          res.writeHead(200); res.end(JSON.stringify({ success: true, ...result })); return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/eas/configure') {
+          serverLog('Running eas build:configure --platform android');
+          const result = await withEasOperation(() => configureEasProject(cwd));
+          broadcastSse('doctor-updated', {});
+          serverLog(result.created ? 'EAS CLI created eas.json' : 'eas.json already exists; skipped EAS CLI');
+          res.writeHead(200); res.end(JSON.stringify(result)); return;
+        }
+
+        if (req.method === 'GET' && pathname === '/api/eas/keystores') {
+          const link = detectEasLink(cwd);
+          if (link.kind !== 'linked') { res.writeHead(409); res.end(JSON.stringify({ error: 'This project is not linked to EAS. Link an EAS project first.' })); return; }
+          const keystores = await listEasKeystores(link.projectId, currentEasAuth());
+          res.writeHead(200); res.end(JSON.stringify({ keystores })); return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/keystore/fetch-eas') {
+          serverLog('Fetching Android keystore metadata from EAS');
+          if (activeBuild) { res.writeHead(409); res.end(JSON.stringify({ error: 'Cannot replace a keystore while a build is running.' })); return; }
+          const link = detectEasLink(cwd);
+          if (link.kind !== 'linked') { res.writeHead(409); res.end(JSON.stringify({ error: 'This project is not linked to EAS. Link an EAS project first.' })); return; }
+          const body = await parseJsonBody(req);
+          const result = await withEasOperation(() => fetchEasKeystore(cwd, link.projectId, body.buildCredentialsId, body.overwrite === true, currentEasAuth()));
+          broadcastSse('keystore-updated', {});
+          serverLog(`Fetched EAS keystore (${result.storeFile}, alias=${result.keyAlias})`);
+          res.writeHead(200); res.end(JSON.stringify({ success: true, ...result })); return;
         }
 
         if (req.method === 'POST' && pathname === '/api/doctor/fix-package') {
@@ -161,6 +280,29 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           broadcastSse('keystore-updated', {});
           res.writeHead(200);
           res.end(JSON.stringify({ success: true }));
+          return;
+        }
+
+        if (req.method === 'GET' && pathname === '/api/scaffold/status') {
+          const scripts = compareScripts(cwd);
+          const pkgScripts = readPackageScripts(cwd);
+          res.writeHead(200);
+          res.end(
+            JSON.stringify({
+              hasScripts: scripts.some((s) => s.exists),
+              scripts,
+              pkgScripts,
+            })
+          );
+          return;
+        }
+
+        if (req.method === 'POST' && pathname === '/api/scaffold') {
+          const body = await parseJsonBody(req);
+          const result = await withEasOperation(() => scaffoldProject(cwd, body.force === true));
+          broadcastSse('doctor-updated', {});
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, ...result }));
           return;
         }
 
@@ -291,7 +433,9 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           }
 
           const ksProps = readKeystoreProps(cwd);
-          if (!ksProps) {
+          const body = await parseJsonBody(req);
+          const buildDebug = body.debug === true;
+          if (!buildDebug && !ksProps) {
             res.writeHead(409);
             res.end(
               JSON.stringify({
@@ -302,9 +446,10 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
             return;
           }
 
-          const body = await parseJsonBody(req);
           activeBuild = { status: 'building', startedAt: new Date().toISOString() };
-          broadcastSse('build-start', { kind: body.aab ? 'AAB' : 'APK' });
+          buildAbort = new AbortController();
+          serverLog(`Starting Android ${buildDebug ? 'debug APK' : body.aab ? 'AAB' : 'APK'} build`);
+          broadcastSse('build-start', { kind: buildDebug ? 'APK' : body.aab ? 'AAB' : 'APK' });
 
           res.writeHead(202);
           res.end(JSON.stringify({ status: 'started' }));
@@ -322,32 +467,56 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
                 bump: body.bump !== false,
                 sync: body.sync !== false,
                 dryRun,
+                debug: buildDebug,
+                signal: buildAbort.signal,
                 ensureKeystoreMode: 'required-existing',
-                onLine: (line) => broadcastSse('log', { line }),
+                onLine: (line) => {
+                  broadcastSse('log', { line });
+                  serverLog(line);
+                },
                 logger: {
-                  step: (msg) => broadcastSse('step', { message: msg }),
-                  ok: (msg) => broadcastSse('log', { line: `[OK] ${msg}` }),
-                  info: (msg) => broadcastSse('log', { line: `[INFO] ${msg}` }),
-                  warn: (msg) => broadcastSse('log', { line: `[WARN] ${msg}` }),
-                  dim: (msg) => broadcastSse('log', { line: `[DIM] ${msg}` }),
-                  error: (msg) => broadcastSse('log', { line: `[ERR] ${msg}` }),
+                  step: (msg) => { broadcastSse('step', { message: msg }); serverLog(`STEP: ${msg}`); },
+                  ok: (msg) => { broadcastSse('log', { line: `[OK] ${msg}` }); serverLog(`OK: ${msg}`); },
+                  info: (msg) => { broadcastSse('log', { line: `[INFO] ${msg}` }); serverLog(`INFO: ${msg}`); },
+                  warn: (msg) => { broadcastSse('log', { line: `[WARN] ${msg}` }); serverLog(`WARN: ${msg}`); },
+                  dim: (msg) => { broadcastSse('log', { line: `[DIM] ${msg}` }); serverLog(msg); },
+                  error: (msg) => { broadcastSse('log', { line: `[ERR] ${msg}` }); serverLog(`ERROR: ${msg}`); },
                 },
               });
               broadcastSse('build-complete', { success: true, artifact: result.artifact, kind: result.kind });
+              serverLog(`Build complete: ${result.artifact}`);
             } catch (err: any) {
-              broadcastSse('build-complete', { success: false, error: err?.message || String(err) });
+              const aborted = err?.name === 'AbortError' || err?.isCanceled || /abort|cancel/i.test(err?.message || '');
+              broadcastSse('build-complete', { success: false, error: aborted ? 'Build stopped by user.' : (err?.message || String(err)) });
+              serverLog(aborted ? 'Build stopped by user.' : `Build failed: ${err?.message || String(err)}`);
             } finally {
               activeBuild = null;
+              buildAbort = null;
             }
           })();
 
           return;
         }
 
+        if (req.method === 'POST' && pathname === '/api/build/stop') {
+          if (!activeBuild || !buildAbort) {
+            res.writeHead(409);
+            res.end(JSON.stringify({ error: 'No build is currently running.' }));
+            return;
+          }
+          buildAbort.abort();
+          serverLog('Stop requested by user.');
+          res.writeHead(202);
+          res.end(JSON.stringify({ status: 'stopping' }));
+          return;
+        }
+
         res.writeHead(404);
         res.end(JSON.stringify({ error: `API route not found: ${pathname}` }));
       } catch (err: any) {
-        res.writeHead(500);
+        const status = err instanceof EasApiError && err.isAuthError ? 401 : err?.status || 500;
+        serverLog(`${req.method} ${pathname} failed (${status}): ${err?.message || String(err)}`);
+        res.writeHead(status);
         res.end(JSON.stringify({ error: err?.message || String(err) }));
       }
       return;
@@ -390,39 +559,6 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
     socket.on('close', () => openSockets.delete(socket));
   });
 
-  // Attach WebSocket server for PTY
-  const wss = new WebSocketServer({ noServer: true });
-  ptyManager.setupPtyWebSocket(wss, {
-    cwd,
-    onPtyExit: (commandId, exitCode) => {
-      broadcastSse('pty-exit', { commandId, exitCode });
-    },
-  });
-
-  server.on('upgrade', (request, socket, head) => {
-    const origin = request.headers.origin;
-    if (origin) {
-      try {
-        const originUrl = new URL(origin);
-        if (originUrl.hostname !== '127.0.0.1' && originUrl.hostname !== 'localhost') {
-          socket.destroy();
-          return;
-        }
-      } catch {
-        socket.destroy();
-        return;
-      }
-    }
-    const pathname = new URL(request.url || '/', `http://127.0.0.1:${actualPort}`).pathname;
-    if (pathname === '/pty') {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
-      });
-    } else {
-      socket.destroy();
-    }
-  });
-
   await new Promise<void>((resolve) => {
     server.listen({ host: '127.0.0.1', port: actualPort }, () => {
       resolve();
@@ -447,24 +583,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
       }
       sseClients.clear();
 
-      // 2. Kill active PTY processes
-      ptyManager.close();
-
-      // 3. Terminate WebSocket clients
-      for (const client of wss.clients) {
-        try {
-          client.terminate();
-        } catch {
-          // ignore
-        }
-      }
-      try {
-        wss.close();
-      } catch {
-        // ignore
-      }
-
-      // 4. Destroy all open TCP sockets
+      // 2. Destroy all open TCP sockets
       for (const socket of openSockets) {
         try {
           socket.destroy();
@@ -492,7 +611,10 @@ async function parseJsonBody(req: IncomingMessage): Promise<any> {
       }
     });
     req.on('end', () => {
-      if (!data.trim()) resolve({});
+      if (!data.trim()) {
+        resolve({});
+        return;
+      }
       try {
         const parsed = JSON.parse(data);
         if (typeof parsed !== 'object' || parsed === null) {

@@ -7,7 +7,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/vendor/xterm.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -41,6 +40,10 @@
       <button class="tab-btn" data-tab="keystore">
         <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v2h2v-2h2v-2h-8.35zM7 15c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/></svg>
         Keystore
+      </button>
+      <button class="tab-btn" data-tab="scaffold">
+        <svg class="tab-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M14 6V4h-4v2H4v2h6v3h-1c-1.1 0-2 .9-2 2v6h4v-4h2v4h4v-6c0-1.1-.9-2-2-2h-1V8h6V6h-6z"/></svg>
+        Scaffold
       </button>
     </nav>
 
@@ -84,14 +87,22 @@
                   <input type="checkbox" id="opt-no-prebuild">
                   <span>Skip expo prebuild (<code>--no-prebuild</code>)</span>
                 </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="opt-debug">
+                  <span>Debug build (debug keystore — no EAS, no version bump, no signing setup)</span>
+                </label>
               </div>
 
               <div id="build-error-banner" class="alert danger" style="display: none;"></div>
 
-              <button type="submit" id="btn-start-build" class="btn btn-primary btn-lg full-width">
-                <span class="btn-text">Start Local Build</span>
-                <span class="btn-spinner" style="display: none;"></span>
-              </button>
+              <div class="build-action-row">
+                <button type="submit" id="btn-start-build" class="btn btn-primary btn-lg">
+                  <span class="btn-text">Start Local Build</span>
+                  <span class="btn-spinner" style="display: none;"></span>
+                </button>
+                <button type="button" id="btn-stop-build" class="btn btn-secondary btn-lg" style="display: none;">Stop Build</button>
+                <span id="build-timer" class="build-timer" style="display: none;">00:00</span>
+              </div>
             </form>
           </div>
 
@@ -120,6 +131,28 @@
 
       <!-- ── DOCTOR TAB ── -->
       <section id="panel-doctor" class="tab-panel">
+        <div class="card margin-bottom" id="eas-account-card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">EAS Account</h2>
+              <p class="card-sub" id="eas-auth-status">Checking EAS authentication...</p>
+            </div>
+            <button type="button" id="btn-refresh-auth" class="btn btn-ghost btn-sm">Refresh</button>
+          </div>
+          <form id="eas-token-form" class="auth-form" style="display: none;">
+            <label class="form-label" for="eas-token">Expo access token</label>
+            <div class="auth-form-row">
+              <input type="password" id="eas-token" class="form-input" autocomplete="off" placeholder="Paste an Expo access token">
+              <button type="submit" class="btn btn-secondary">Connect</button>
+            </div>
+            <span class="form-hint">Your token is kept only by this local server for this session.</span>
+          </form>
+          <div id="eas-login-hint" class="eas-login-hint" style="display: none;">
+            <p class="form-label" style="margin-bottom: 4px;">…or log in with the EAS CLI</p>
+            <code class="cmd-line">eas login</code>
+            <span class="form-hint">Run this in your terminal, then click <strong>Refresh</strong> above. This UI reads your logged-in session from <code>~/.expo/state.json</code>.</span>
+          </div>
+        </div>
         <div class="card">
           <div class="card-header">
             <div>
@@ -137,8 +170,8 @@
 
           <div id="doctor-actions-bar" class="actions-bar" style="display: none;">
             <button id="btn-fix-pkg" class="btn btn-secondary btn-sm" style="display: none;">Fix Package Name</button>
-            <button id="btn-eas-init" class="btn btn-secondary btn-sm" style="display: none;">Run `eas init`</button>
-            <button id="btn-eas-configure" class="btn btn-secondary btn-sm" style="display: none;">Run `eas build:configure`</button>
+            <button id="btn-eas-init" class="btn btn-secondary btn-sm" style="display: none;">Link EAS Project</button>
+            <button id="btn-eas-configure" class="btn btn-secondary btn-sm" style="display: none;">Create eas.json</button>
             <button id="btn-doctor-rehydrate" class="btn btn-secondary btn-sm" style="display: none;">Rehydrate Keystore</button>
           </div>
 
@@ -275,32 +308,31 @@
           <!-- EAS Subtab -->
           <div id="subpanel-ks-eas" class="subpanel">
             <div class="eas-fetch-box">
-              <p>Fetch Android credentials directly from Expo Application Services (EAS). Launches <code>eas credentials</code> in the embedded web terminal dock below.</p>
-              <button type="button" id="btn-trigger-eas-fetch" class="btn btn-primary margin-top">Launch `eas credentials` in Web Terminal</button>
+              <p id="eas-keystore-status">Select an Android keystore stored with the linked EAS project. Credentials are fetched directly and written locally.</p>
+              <div id="eas-keystore-list" class="remote-list" aria-live="polite"></div>
+              <button type="button" id="btn-trigger-eas-fetch" class="btn btn-primary margin-top">Fetch Keystore from EAS</button>
             </div>
           </div>
 
         </div>
       </section>
+
+      <!-- ── SCAFFOLD TAB ── -->
+      <section id="panel-scaffold" class="tab-panel">
+        <div class="card">
+          <h2 class="card-title">Scaffold Local Build Scripts</h2>
+          <p class="card-sub">Drops reusable, committable <code>scripts/*.js</code> into your project and adds <code>build:android:apk</code> / <code>build:android:aab</code> npm scripts. From then on you build from the terminal.</p>
+
+          <div id="scaffold-status" class="status-content margin-top">
+            <div class="dim">Loading scaffold status...</div>
+          </div>
+
+          <button type="button" id="btn-scaffold" class="btn btn-primary margin-top">Scaffold Project</button>
+          <span class="form-hint" style="display: block; margin-top: 8px;">Existing <code>scripts/*.js</code> are never overwritten unless you confirm.</span>
+        </div>
+      </section>
     </main>
 
-    <!-- ── EMBEDDED TERMINAL DOCK ── -->
-    <div id="terminal-dock" class="terminal-dock collapsed">
-      <div class="dock-header">
-        <div class="dock-title">
-          <span class="dock-dot"></span>
-          <span>Web Terminal Dock (allowlisted <code>eas</code> subcommands)</span>
-          <span id="pty-status-text" class="pty-status-text">Disconnected</span>
-        </div>
-        <div class="dock-actions">
-          <button id="btn-dock-clear" class="btn btn-ghost btn-xs">Clear</button>
-          <button id="btn-dock-toggle" class="btn btn-ghost btn-xs">Expand Terminal</button>
-        </div>
-      </div>
-      <div class="dock-body">
-        <div id="terminal-container"></div>
-      </div>
-    </div>
   <!-- Custom Modal Overlay -->
   <div id="custom-modal-overlay" class="modal-overlay" style="display: none;">
     <div class="modal-card" id="modal-card">
@@ -314,6 +346,7 @@
           <input type="text" id="modal-input-field" class="form-input" placeholder="">
           <div id="modal-input-error" class="form-hint err" style="display: none;"></div>
         </div>
+        <div id="modal-choice-container" class="choice-list" style="display: none;"></div>
       </div>
       <div class="modal-footer">
         <button type="button" id="modal-btn-cancel" class="btn btn-ghost">Cancel</button>
@@ -322,8 +355,6 @@
     </div>
   </div>
 
-  <script src="/vendor/xterm.js"></script>
-  <script src="/vendor/xterm-addon-fit.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
