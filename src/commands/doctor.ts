@@ -15,7 +15,9 @@ import { detectEasLink, isEasReady, EasLinkResult } from '../core/easLink';
 import { readKeystoreProps, KeystoreProps } from '../core/setupSigning';
 import { ensureKeystore } from '../core/keystore';
 import { findRehydrateCandidate } from '../core/keystore/rehydrate';
+import crypto from 'crypto';
 import { readExpoConfig, invalidateExpoConfigCache } from '../core/expoConfig';
+import { generateKeystore } from '../core/keystore/generate';
 
 export type CheckResult = { name: string; ok: boolean; detail?: string; warn?: boolean };
 
@@ -711,6 +713,7 @@ export interface RunDoctorOpts {
   /** When true, prefix the section header (default 'local-expo-build doctor'). */
   title?: string;
   skipUpdateCheck?: boolean;
+  fixAll?: boolean;
 }
 
 export interface RunDoctorResult {
@@ -728,6 +731,7 @@ export async function runDoctor({
   dryRun,
   title,
   skipUpdateCheck,
+  fixAll,
 }: RunDoctorOpts): Promise<RunDoctorResult> {
   log.step(title || 'local-expo-build doctor');
 
@@ -880,57 +884,40 @@ export async function runDoctor({
     console.log('');
   }
 
-  await offerAndroidPackageFix(cwd, androidPkg, results, dryRun);
-
   const interactive = process.stdin.isTTY && !dryRun;
   let currentEasLink = easLink;
 
-  // Step 1 — Link EAS project (`eas init`)
-  if (
-    interactive &&
-    !!eas &&
-    currentEasLink.kind !== 'linked' &&
-    currentEasLink.kind !== 'no-expo-config'
-  ) {
-    log.warn(
-      'This project is not linked to EAS. Linking enables managed keystore storage, ' +
-        'remote credentials, and `local-expo-build keystore fetch`.'
-    );
-    const yes = await confirm({
-      message: 'Run `eas init` now to link this project?',
+  const needsPkgFix = androidPkg.source === 'app.json' && (androidPkg.pkg === null || !ANDROID_PKG_RE.test(androidPkg.pkg));
+  const needsEasConfigFix = !!eas && currentEasLink.kind === 'linked' && !currentEasLink.hasEasJson;
+  const needsKeystoreFix = !readKeystoreProps(cwd);
+
+  const fixableCount = (needsPkgFix ? 1 : 0) + (needsEasConfigFix ? 1 : 0) + (needsKeystoreFix ? 1 : 0);
+
+  let runAutoFixAll = fixAll === true;
+  if (!runAutoFixAll && interactive && fixableCount > 0) {
+    runAutoFixAll = await confirm({
+      message: `Fix all ${fixableCount} identified issue(s) automatically?`,
       default: true,
     });
-    if (yes) {
-      try {
-        await execa('eas', ['init'], { cwd, stdio: 'inherit' });
-        log.ok('EAS link complete.');
-        currentEasLink = detectEasLink(cwd);
-        replaceResultByName(results, 'EAS project linked', easLinkCheck(currentEasLink));
-      } catch (err: any) {
-        log.error(`eas init failed: ${err?.shortMessage || err?.message || err}`);
-      }
-    } else {
-      log.dim('Skipped. You can link later with `eas init`.');
-    }
-    console.log('');
-  } else if (!eas && currentEasLink.kind !== 'linked' && currentEasLink.kind !== 'no-expo-config') {
-    log.dim('Install eas-cli (npm i -g eas-cli) to link this project for managed keystores.');
     console.log('');
   }
 
-  // Step 2 — Create eas.json (`eas build:configure`)
-  if (
-    interactive &&
-    !!eas &&
-    currentEasLink.kind === 'linked' &&
-    !currentEasLink.hasEasJson
-  ) {
-    log.warn('eas.json is missing — required by `eas credentials` and EAS submit/cloud builds.');
-    const yes = await confirm({
-      message: 'Run `eas build:configure --platform android` now to create eas.json?',
-      default: true,
-    });
-    if (yes) {
+  if (runAutoFixAll) {
+    log.step('Fixing identified issues');
+
+    if (needsPkgFix) {
+      const cleanFolder = path.basename(cwd).toLowerCase().replace(/[^a-z0-9]/g, '') || 'app';
+      const autoPackage = `com.example.${cleanFolder}`;
+      try {
+        setAndroidPackage(cwd, autoPackage);
+        log.ok(`Set android.package to "${autoPackage}" in app.json`);
+        replaceResultByName(results, 'Android package (applicationId)', androidPackageCheck(cwd).result);
+      } catch (err: any) {
+        log.error(`Could not set Android package: ${err?.message || err}`);
+      }
+    }
+
+    if (needsEasConfigFix) {
       try {
         await execa('eas', ['build:configure', '--platform', 'android'], { cwd, stdio: 'inherit' });
         log.ok('eas.json created.');
@@ -939,66 +926,161 @@ export async function runDoctor({
       } catch (err: any) {
         log.error(`eas build:configure failed: ${err?.shortMessage || err?.message || err}`);
       }
-    } else {
-      log.dim('Skipped. Run later: eas build:configure --platform android');
     }
-    console.log('');
-  }
 
-  // Step 3a — Rehydrate from credentials.json if possible (skips picker + password re-entry)
-  if (interactive && !readKeystoreProps(cwd) && findRehydrateCandidate(cwd)) {
-    log.warn('Found credentials.json + .jks but no keystore.properties.');
-    log.dim('We can bind them by copying the .jks into android/app/ and writing keystore.properties.');
-    const yes = await confirm({
-      message: 'Rehydrate keystore.properties from credentials.json now? (no password re-entry)',
-      default: true,
-    });
-    if (yes) {
-      try {
-        await ensureKeystore(cwd, 'rehydrate');
-        const after = keystorePropsCheck(cwd);
-        replaceResultByName(results, 'keystore.properties', after.result);
-        replaceResultByName(results, 'Signing keystore (.jks)', jksCheck(cwd, after.props));
-        replaceResultByName(
-          results,
-          'credentials.json (EAS)',
-          credentialsJsonCheck(cwd, after.props, currentEasLink).result
-        );
-      } catch (err: any) {
-        log.error(`Rehydrate failed: ${err?.message || err}`);
+    if (needsKeystoreFix) {
+      if (findRehydrateCandidate(cwd)) {
+        try {
+          await ensureKeystore(cwd, 'rehydrate');
+          log.ok('Keystore rehydrated from credentials.json.');
+        } catch (err: any) {
+          log.error(`Rehydrate failed: ${err?.message || err}`);
+        }
+      } else {
+        try {
+          const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
+          await generateKeystore(cwd, {
+            filename: 'release.p12',
+            keyAlias: 'release',
+            storePassword: pass,
+            keyPassword: pass,
+            cn: 'Release Signer',
+            org: 'LocalExpoBuild',
+            country: 'US',
+          });
+          log.ok('Generated release.p12 keystore & credentials.json.');
+        } catch (err: any) {
+          log.error(`Keystore generation failed: ${err?.message || err}`);
+        }
       }
-    } else {
-      log.dim('Skipped. Run later: npx local-expo-build keystore rehydrate');
+      const after = keystorePropsCheck(cwd);
+      replaceResultByName(results, 'keystore.properties', after.result);
+      replaceResultByName(results, 'Signing keystore (.jks)', jksCheck(cwd, after.props));
+      replaceResultByName(
+        results,
+        'credentials.json (EAS)',
+        credentialsJsonCheck(cwd, after.props, currentEasLink).result
+      );
     }
     console.log('');
-  }
+  } else {
+    await offerAndroidPackageFix(cwd, androidPkg, results, dryRun);
 
-  // Step 3b — Generic keystore setup (only if 3a didn't already establish keystore.properties)
-  const ksFresh = keystorePropsCheck(cwd);
-  if (interactive && !ksFresh.fileExists) {
-    log.warn('No keystore.properties yet — release builds need a signing keystore.');
-    const yes = await confirm({
-      message: 'Set up the Android signing keystore now?',
-      default: true,
-    });
-    if (yes) {
-      try {
-        await ensureKeystore(cwd);
-        const after = keystorePropsCheck(cwd);
-        replaceResultByName(results, 'keystore.properties', after.result);
-        replaceResultByName(results, 'Signing keystore (.jks)', jksCheck(cwd, after.props));
-        replaceResultByName(
-          results,
-          'credentials.json (EAS)',
-          credentialsJsonCheck(cwd, after.props, currentEasLink).result
-        );
-      } catch (err: any) {
-        log.error(`Keystore setup failed: ${err?.message || err}`);
+    // Step 1 — Link EAS project (`eas init`)
+    if (
+      interactive &&
+      !!eas &&
+      currentEasLink.kind !== 'linked' &&
+      currentEasLink.kind !== 'no-expo-config'
+    ) {
+      log.warn(
+        'This project is not linked to EAS. Linking enables managed keystore storage, ' +
+          'remote credentials, and `local-expo-build keystore fetch`.'
+      );
+      const yes = await confirm({
+        message: 'Run `eas init` now to link this project?',
+        default: true,
+      });
+      if (yes) {
+        try {
+          await execa('eas', ['init'], { cwd, stdio: 'inherit' });
+          log.ok('EAS link complete.');
+          currentEasLink = detectEasLink(cwd);
+          replaceResultByName(results, 'EAS project linked', easLinkCheck(currentEasLink));
+        } catch (err: any) {
+          log.error(`eas init failed: ${err?.shortMessage || err?.message || err}`);
+        }
+      } else {
+        log.dim('Skipped. You can link later with `eas init`.');
       }
-    } else {
-      log.dim('Skipped. Run later: npx local-expo-build keystore setup');
+      console.log('');
+    } else if (!eas && currentEasLink.kind !== 'linked' && currentEasLink.kind !== 'no-expo-config') {
+      log.dim('Install eas-cli (npm i -g eas-cli) to link this project for managed keystores.');
+      console.log('');
     }
-    console.log('');
+
+    // Step 2 — Create eas.json (`eas build:configure`)
+    if (
+      interactive &&
+      !!eas &&
+      currentEasLink.kind === 'linked' &&
+      !currentEasLink.hasEasJson
+    ) {
+      log.warn('eas.json is missing — required by `eas credentials` and EAS submit/cloud builds.');
+      const yes = await confirm({
+        message: 'Run `eas build:configure --platform android` now to create eas.json?',
+        default: true,
+      });
+      if (yes) {
+        try {
+          await execa('eas', ['build:configure', '--platform', 'android'], { cwd, stdio: 'inherit' });
+          log.ok('eas.json created.');
+          currentEasLink = detectEasLink(cwd);
+          replaceResultByName(results, 'EAS project linked', easLinkCheck(currentEasLink));
+        } catch (err: any) {
+          log.error(`eas build:configure failed: ${err?.shortMessage || err?.message || err}`);
+        }
+      } else {
+        log.dim('Skipped. Run later: eas build:configure --platform android');
+      }
+      console.log('');
+    }
+
+    // Step 3a — Rehydrate from credentials.json if possible
+    if (interactive && !readKeystoreProps(cwd) && findRehydrateCandidate(cwd)) {
+      log.warn('Found credentials.json + .jks but no keystore.properties.');
+      log.dim('We can bind them by copying the .jks into android/app/ and writing keystore.properties.');
+      const yes = await confirm({
+        message: 'Rehydrate keystore.properties from credentials.json now? (no password re-entry)',
+        default: true,
+      });
+      if (yes) {
+        try {
+          await ensureKeystore(cwd, 'rehydrate');
+          const after = keystorePropsCheck(cwd);
+          replaceResultByName(results, 'keystore.properties', after.result);
+          replaceResultByName(results, 'Signing keystore (.jks)', jksCheck(cwd, after.props));
+          replaceResultByName(
+            results,
+            'credentials.json (EAS)',
+            credentialsJsonCheck(cwd, after.props, currentEasLink).result
+          );
+        } catch (err: any) {
+          log.error(`Rehydrate failed: ${err?.message || err}`);
+        }
+      } else {
+        log.dim('Skipped. Run later: npx local-expo-build keystore rehydrate');
+      }
+      console.log('');
+    }
+
+    // Step 3b — Generic keystore setup
+    const ksFresh = keystorePropsCheck(cwd);
+    if (interactive && !ksFresh.fileExists) {
+      log.warn('No keystore.properties yet — release builds need a signing keystore.');
+      const yes = await confirm({
+        message: 'Set up the Android signing keystore now?',
+        default: true,
+      });
+      if (yes) {
+        try {
+          await ensureKeystore(cwd);
+          const after = keystorePropsCheck(cwd);
+          replaceResultByName(results, 'keystore.properties', after.result);
+          replaceResultByName(results, 'Signing keystore (.jks)', jksCheck(cwd, after.props));
+          replaceResultByName(
+            results,
+            'credentials.json (EAS)',
+            credentialsJsonCheck(cwd, after.props, currentEasLink).result
+          );
+        } catch (err: any) {
+          log.error(`Keystore setup failed: ${err?.message || err}`);
+        }
+      } else {
+        log.dim('Skipped. Run later: npx local-expo-build keystore setup');
+      }
+      console.log('');
+    }
   }
 
   await maybePromptScriptUpdate({
@@ -1020,9 +1102,10 @@ export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
     .description('Check your local environment for Expo Android builds')
-    .action(async (_opts, cmd) => {
+    .option('--fix', 'automatically fix all identified issues without prompting')
+    .action(async (opts, cmd) => {
       const { cwd, dryRun, skipUpdateCheck } = getCtx(cmd);
-      const { failedCount } = await runDoctor({ cwd, dryRun, skipUpdateCheck });
+      const { failedCount } = await runDoctor({ cwd, dryRun, skipUpdateCheck, fixAll: !!opts.fix });
       if (failedCount > 0) process.exit(1);
     });
 }
