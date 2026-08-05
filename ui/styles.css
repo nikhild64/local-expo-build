@@ -296,6 +296,11 @@ body {
   border-color: var(--color-primary);
 }
 
+select.form-input option {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
 .form-hint {
   display: block;
   font-size: 12px;

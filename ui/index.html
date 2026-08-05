@@ -112,6 +112,19 @@
                   <span class="form-hint">Used for fetching next versionCode from EAS</span>
                 </div>
 
+                <div class="form-group">
+                  <label class="form-label" for="build-ram">Max RAM Allocation</label>
+                  <select id="build-ram" class="form-input">
+                    <option value="default">Default (System & Gradle defaults)</option>
+                    <option value="2g">2 GB (-Xmx2048m)</option>
+                    <option value="4g" selected>4 GB (-Xmx4096m — Recommended)</option>
+                    <option value="8g">8 GB (-Xmx8192m — High Performance)</option>
+                    <option value="12g">12 GB (-Xmx12288m)</option>
+                    <option value="16g">16 GB (-Xmx16384m)</option>
+                  </select>
+                  <span class="form-hint">Increases JVM heap & Node.js memory limit for faster Gradle & Expo builds</span>
+                </div>
+
                 <div class="form-group checkbox-group">
                   <label class="checkbox-label">
                     <input type="checkbox" id="opt-clean">

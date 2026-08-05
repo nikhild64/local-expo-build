@@ -493,6 +493,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
                 sync: body.sync !== false,
                 dryRun,
                 debug: buildDebug,
+                maxRam: body.maxRam,
                 signal: buildAbort.signal,
                 ensureKeystoreMode: 'required-existing',
                 onLine: (line) => {

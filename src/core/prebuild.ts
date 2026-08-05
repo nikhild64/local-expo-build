@@ -1,16 +1,18 @@
 import readline from 'readline';
 import { execa } from 'execa';
 import { log } from '../util/log';
+import { parseRamMb } from '../util/ram';
 import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
 
 export interface PrebuildOpts {
   cwd: string;
   clean?: boolean;
+  maxRam?: string;
   onLine?: (line: string) => void;
   signal?: AbortSignal;
 }
 
-export async function prebuild({ cwd, clean = false, onLine, signal }: PrebuildOpts): Promise<void> {
+export async function prebuild({ cwd, clean = false, maxRam, onLine, signal }: PrebuildOpts): Promise<void> {
   const args = ['prebuild', '--platform', 'android', '--non-interactive'];
   if (clean) args.push('--clean');
   log.info(`expo ${args.join(' ')}`);
@@ -21,8 +23,14 @@ export async function prebuild({ cwd, clean = false, onLine, signal }: PrebuildO
     );
   }
   const { command, args: execArgs, execa: execaOpts } = projectBinExecArgs(bin, args);
+  const ramMb = parseRamMb(maxRam);
+  const env: Record<string, string | undefined> = { ...process.env };
+  if (ramMb) {
+    env.NODE_OPTIONS = `--max-old-space-size=${ramMb}`;
+  }
+
   if (onLine) {
-    const proc = execa(command, execArgs, { cwd, stdio: ['inherit', 'pipe', 'pipe'], cancelSignal: signal, ...execaOpts });
+    const proc = execa(command, execArgs, { cwd, env, stdio: ['inherit', 'pipe', 'pipe'], cancelSignal: signal, ...execaOpts });
     let rl: readline.Interface | undefined;
     let rlErr: readline.Interface | undefined;
     if (proc.stdout) {
@@ -46,6 +54,6 @@ export async function prebuild({ cwd, clean = false, onLine, signal }: PrebuildO
       rlErr?.close();
     }
   } else {
-    await execa(command, execArgs, { cwd, stdio: 'inherit', cancelSignal: signal, ...execaOpts });
+    await execa(command, execArgs, { cwd, env, stdio: 'inherit', cancelSignal: signal, ...execaOpts });
   }
 }

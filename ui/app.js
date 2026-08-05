@@ -576,6 +576,7 @@
         aab: selectedKind === 'aab',
         debug: document.getElementById('opt-debug').checked,
         profile: document.getElementById('build-profile').value || 'production',
+        maxRam: document.getElementById('build-ram')?.value || 'default',
         clean: document.getElementById('opt-clean').checked,
         bump: !document.getElementById('opt-no-bump').checked,
         sync: !document.getElementById('opt-no-sync').checked,

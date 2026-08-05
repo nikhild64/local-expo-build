@@ -59,6 +59,7 @@ export function registerBuildCommand(program: Command): void {
     .option('--no-sync', 'skip EAS versionCode sync after build')
     .option('--no-prebuild', 'skip expo prebuild step')
     .option('--debug', 'build a debug APK with the debug keystore (no EAS, no version bump, no signing setup)')
+    .option('--max-ram <ram>', 'Max RAM allocation for Gradle & Node (e.g. 2g, 4g, 8g, 12g, 16g)', 'default')
     .action(async (opts, cmd) => {
       const ctx = getCtx(cmd);
       await maybePromptScriptUpdate({
@@ -80,6 +81,7 @@ export function registerBuildCommand(program: Command): void {
         dryRun: ctx.dryRun,
         ensureKeystoreMode: 'interactive',
         debug: !!opts.debug,
+        maxRam: opts.maxRam,
       });
     });
 

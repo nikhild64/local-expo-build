@@ -34,6 +34,8 @@ export interface AndroidBuildOpts {
   /** Build a debug APK signed with the auto-generated debug keystore. Skips
    *  release signing, version bump, and EAS sync — no EAS or keystore setup. */
   debug?: boolean;
+  /** Max RAM allocation for Gradle JVM and Node.js process (e.g. '2g', '4g', '8g', '12g', '16g', 'default'). */
+  maxRam?: string;
   signal?: AbortSignal;
 }
 
@@ -71,7 +73,7 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
     if (dryRun) {
       logger.dim(`[dry-run] would run: expo prebuild --platform android${opts.clean ? ' --clean' : ''}`);
     } else {
-      await prebuild({ cwd: opts.cwd, clean: opts.clean, onLine: opts.onLine, signal: opts.signal });
+      await prebuild({ cwd: opts.cwd, clean: opts.clean, maxRam: opts.maxRam, onLine: opts.onLine, signal: opts.signal });
     }
   } else {
     logger.dim('Skipping prebuild (--no-prebuild)');
@@ -130,7 +132,7 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
     const wrapper = isWin ? 'gradlew.bat' : './gradlew';
     logger.dim(`[dry-run] would run (cwd=android/): ${wrapper} ${task}`);
   } else {
-    artifact = await gradleRun({ cwd: opts.cwd, task, onLine: opts.onLine, signal: opts.signal });
+    artifact = await gradleRun({ cwd: opts.cwd, task, maxRam: opts.maxRam, onLine: opts.onLine, signal: opts.signal });
   }
 
   // 6/6 sync EAS versionCode
