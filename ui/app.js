@@ -23,6 +23,13 @@
   const artifactResult = document.getElementById('artifact-result');
   const artifactPath = document.getElementById('artifact-path');
 
+  const buildProgressContainer = document.getElementById('build-progress-container');
+  const progressStageBadge = document.getElementById('progress-stage-badge');
+  const progressStageTitle = document.getElementById('progress-stage-title');
+  const progressPercentage = document.getElementById('progress-percentage');
+  const progressFill = document.getElementById('progress-fill');
+  const progressSubText = document.getElementById('progress-sub-text');
+
   const projectChip = document.getElementById('project-chip');
   const projectNameText = document.getElementById('project-name-text');
 
@@ -464,11 +471,13 @@
 
     eventSource.addEventListener('log', (e) => {
       const data = JSON.parse(e.data);
+      parseLogLineForProgress(data.line);
       appendLog(data.line);
     });
 
     eventSource.addEventListener('step', (e) => {
       const data = JSON.parse(e.data);
+      parseLogLineForProgress(data.message);
       appendLog(`▶ ${data.message}`, 'step');
     });
 
@@ -477,6 +486,7 @@
       logConsole.innerHTML = '';
       artifactResult.style.display = 'none';
       buildErrorBanner.style.display = 'none';
+      resetProgressBar();
       appendLog('=== Starting Local Android Build ===', 'step');
     });
 
@@ -485,12 +495,14 @@
       setBuildingState(false);
       btnStopBuild.textContent = 'Stop Build';
       if (data.success) {
+        updateProgressUI(8, 100, 'Build Succeeded!', `Artifact: ${data.artifact || ''}`, true, false);
         appendLog(`✓ Build Succeeded (${data.kind})`, 'ok');
         if (data.artifact) {
           artifactPath.textContent = data.artifact;
           artifactResult.style.display = 'block';
         }
       } else {
+        updateProgressUI(currentStageIndex, currentPercentage, 'Build Failed', data.error || 'Build failed.', false, true);
         appendLog(`✗ Build Failed: ${data.error}`, 'err');
         showBuildError(data.error || 'Build failed.');
       }
@@ -520,6 +532,133 @@
         return '';
       }
     });
+  }
+
+  // ── Build Progress Controller Logic ──
+  const STAGE_CONFIGS = [
+    { id: 1, label: 'Init', title: 'Initializing Local Build' },
+    { id: 2, label: 'Prebuild', title: 'Running Expo Prebuild' },
+    { id: 3, label: 'Signing', title: 'Configuring Keystore & Signing' },
+    { id: 4, label: 'Config', title: 'Configuring Gradle & Dependencies' },
+    { id: 5, label: 'Codegen', title: 'Generating Codegen & Resources' },
+    { id: 6, label: 'Compile', title: 'Compiling Native Code & Modules' },
+    { id: 7, label: 'Bundle', title: 'Bundling JavaScript & Assets' },
+    { id: 8, label: 'Package', title: 'Packaging Release Binary' },
+  ];
+
+  function resetProgressBar() {
+    currentStageIndex = 1;
+    currentPercentage = 2;
+    if (progressFill) {
+      progressFill.className = 'progress-fill';
+    }
+    updateProgressUI(1, 2, 'Initializing Local Build...', 'Preparing build environment...', false, false);
+  }
+
+  function updateProgressUI(stageIdx, pct, title, subtext, isComplete = false, isError = false) {
+    if (!buildProgressContainer) return;
+    buildProgressContainer.style.display = 'flex';
+
+    if (stageIdx > currentStageIndex) currentStageIndex = stageIdx;
+    if (pct > currentPercentage) currentPercentage = pct;
+    if (isComplete) currentPercentage = 100;
+
+    const clampedPct = Math.min(100, Math.max(0, currentPercentage));
+
+    if (progressStageBadge) progressStageBadge.textContent = `Stage ${currentStageIndex}/8`;
+    if (progressStageTitle) progressStageTitle.textContent = title || STAGE_CONFIGS[currentStageIndex - 1]?.title || 'Building...';
+    if (progressPercentage) progressPercentage.textContent = `${Math.round(clampedPct)}%`;
+    if (progressFill) {
+      progressFill.style.width = `${clampedPct}%`;
+      if (isComplete) progressFill.classList.add('success');
+      if (isError) progressFill.classList.add('error');
+    }
+    if (progressSubText && subtext) progressSubText.textContent = subtext;
+
+    // Stepper dots
+    document.querySelectorAll('.progress-stepper .step-dot').forEach((dot) => {
+      const stepNum = parseInt(dot.getAttribute('data-step'), 10);
+      dot.classList.remove('active', 'completed');
+      if (stepNum < currentStageIndex) {
+        dot.classList.add('completed');
+      } else if (stepNum === currentStageIndex) {
+        dot.classList.add(isComplete ? 'completed' : 'active');
+      }
+    });
+  }
+
+  function parseLogLineForProgress(line) {
+    if (!line || typeof line !== 'string') return;
+    const cleanLine = line.trim();
+
+    // 1. Gradle Task matching (> Task :module:taskName)
+    const taskMatch = cleanLine.match(/> Task\s+:([^\s]+)/);
+    if (taskMatch) {
+      const fullTask = taskMatch[1];
+      const taskName = fullTask.split(':').pop() || fullTask;
+
+      if (taskName.includes('createBundle') || taskName.includes('createExpoConfig') || taskName.includes('mergeReleaseAssets')) {
+        const nextPct = Math.min(88, Math.max(78, currentPercentage + 0.6));
+        updateProgressUI(7, nextPct, 'Bundling JavaScript & Assets', `Task: :${fullTask}`);
+      } else if (taskName.includes('compile') || taskName.includes('classes') || taskName.includes('javaPreCompile') || taskName.includes('jar') || taskName.includes('bundleLib')) {
+        const nextPct = Math.min(76, Math.max(58, currentPercentage + 0.4));
+        updateProgressUI(6, nextPct, 'Compiling Native Code & Modules', `Task: :${fullTask}`);
+      } else if (taskName.includes('generate') || taskName.includes('process') || taskName.includes('extract') || taskName.includes('parse') || taskName.includes('write')) {
+        const nextPct = Math.min(56, Math.max(42, currentPercentage + 0.3));
+        updateProgressUI(5, nextPct, 'Generating Codegen & Resources', `Task: :${fullTask}`);
+      } else if (taskName.includes('package') || taskName.includes('bundle') || taskName.includes('assemble')) {
+        const nextPct = Math.min(96, Math.max(88, currentPercentage + 0.5));
+        updateProgressUI(8, nextPct, 'Packaging Release Binary', `Task: :${fullTask}`);
+      } else {
+        const nextPct = Math.min(95, Math.max(30, currentPercentage + 0.2));
+        updateProgressUI(currentStageIndex, nextPct, undefined, `Task: :${fullTask}`);
+      }
+      return;
+    }
+
+    // 2. Gradle Configure project
+    if (cleanLine.includes('> Configure project')) {
+      const projMatch = cleanLine.match(/> Configure project :?([^\s]*)/);
+      const projName = projMatch && projMatch[1] ? projMatch[1] : 'root';
+      updateProgressUI(4, Math.min(40, Math.max(30, currentPercentage + 0.5)), 'Configuring Gradle & Dependencies', `Configuring: :${projName}`);
+      return;
+    }
+
+    if (cleanLine.includes('Using expo modules') || cleanLine.includes('Applying gradle plugin')) {
+      updateProgressUI(4, Math.min(40, Math.max(30, currentPercentage + 0.5)), 'Configuring Gradle & Dependencies', cleanLine);
+      return;
+    }
+
+    // 3. Expo Prebuild steps
+    if (cleanLine.includes('Creating native directory') || cleanLine.includes('Updating package.json') || cleanLine.includes('Running prebuild')) {
+      updateProgressUI(2, 14, 'Running Expo Prebuild', cleanLine);
+      return;
+    }
+    if (cleanLine.includes('Finished prebuild')) {
+      updateProgressUI(2, 22, 'Finished Expo Prebuild', 'Native directory updated successfully');
+      return;
+    }
+
+    // 4. Keystore / Signing setup
+    if (cleanLine.includes('ensure keystore') || cleanLine.includes('setupSigning') || cleanLine.includes('signing (debug keystore)')) {
+      updateProgressUI(3, 28, 'Configuring Keystore & Signing', 'Injecting release signingConfig...');
+      return;
+    }
+
+    // 5. Step headers (▶ 1/6, ▶ 2/6, etc.)
+    if (cleanLine.includes('1/6 expo prebuild')) {
+      updateProgressUI(2, 10, 'Running Expo Prebuild', 'Generating android native files...');
+    } else if (cleanLine.includes('2/6 pin Gradle')) {
+      updateProgressUI(3, 24, 'Pinning Gradle Wrapper', 'Validating Gradle wrapper version...');
+    } else if (cleanLine.includes('3/6 bump version')) {
+      updateProgressUI(3, 26, 'Bumping App Version', 'Fetching versionCode from EAS...');
+    } else if (cleanLine.includes('4/6 ensure keystore')) {
+      updateProgressUI(3, 28, 'Configuring Keystore & Signing', 'Injecting signing keys...');
+    } else if (cleanLine.includes('5/6 gradle')) {
+      updateProgressUI(4, 30, 'Executing Gradle Build', 'Initializing build graph...');
+    } else if (cleanLine.includes('6/6 sync EAS')) {
+      updateProgressUI(8, 98, 'Syncing EAS Version', 'Posting updated versionCode...');
+    }
   }
 
   function appendLog(line, type = 'dim') {

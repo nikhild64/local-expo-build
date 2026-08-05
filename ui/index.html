@@ -167,6 +167,37 @@
               <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: -2px; margin-right: 4px; fill: currentColor;"><path d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61l1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42A8.962 8.962 0 0 0 12 4c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-2.12-.74-4.07-1.97-5.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></svg><strong>Build Duration Note:</strong> If running for the first time, Gradle downloads Android SDK dependencies which can take 5–10 minutes. Subsequent reruns reuse cached layers and build significantly faster!
             </div>
 
+            <!-- Dynamic Build Progress Bar -->
+            <div id="build-progress-container" class="build-progress-card" style="display: none;">
+              <div class="progress-header">
+                <div class="progress-title-group">
+                  <span id="progress-stage-badge" class="progress-stage-badge">Stage 1/8</span>
+                  <span id="progress-stage-title" class="progress-stage-title">Initializing Local Build...</span>
+                </div>
+                <span id="progress-percentage" class="progress-percentage">0%</span>
+              </div>
+
+              <div class="progress-track">
+                <div id="progress-fill" class="progress-fill" style="width: 0%;"></div>
+              </div>
+
+              <div class="progress-sub-bar">
+                <span id="progress-sub-text" class="progress-sub-text">Preparing build environment...</span>
+              </div>
+
+              <!-- Stage Stepper Pills -->
+              <div class="progress-stepper">
+                <div class="step-dot active" data-step="1" title="Init"><span>1. Init</span></div>
+                <div class="step-dot" data-step="2" title="Prebuild"><span>2. Prebuild</span></div>
+                <div class="step-dot" data-step="3" title="Signing"><span>3. Signing</span></div>
+                <div class="step-dot" data-step="4" title="Configure"><span>4. Config</span></div>
+                <div class="step-dot" data-step="5" title="Codegen"><span>5. Codegen</span></div>
+                <div class="step-dot" data-step="6" title="Compile"><span>6. Compile</span></div>
+                <div class="step-dot" data-step="7" title="Bundle JS"><span>7. Bundle</span></div>
+                <div class="step-dot" data-step="8" title="Package"><span>8. Package</span></div>
+              </div>
+            </div>
+
             <div id="artifact-result" class="alert ok artifact-banner" style="display: none;">
               <div class="artifact-info">
                 <strong>Build Artifact Ready:</strong>
