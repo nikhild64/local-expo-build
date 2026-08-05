@@ -52,22 +52,37 @@ export function bumpVersion({
 
   let nextCode: number | null = null;
   if (!skipEas && appJson.expo?.extra?.eas?.projectId) {
-    log.info(`Fetching EAS versionCode (profile: ${profile})...`);
-    try {
-      const { stdout } = execaSync(
-        'eas',
-        ['build:version:get', '--platform', 'android', '--profile', profile, '--non-interactive'],
-        { cwd, encoding: 'utf8', reject: false }
-      );
-      const match = stdout.match(/Android versionCode\s*[-–]\s*(\d+)/i);
-      if (match) {
-        nextCode = parseInt(match[1], 10) + 1;
-        log.ok(`EAS versionCode: ${match[1]} → ${nextCode}`);
-      } else {
-        log.warn(`Could not parse EAS versionCode; falling back to local bump`);
+    const easJsonPath = path.join(cwd, 'eas.json');
+    let isRemote = false;
+    if (fs.existsSync(easJsonPath)) {
+      try {
+        const easJson = JSON.parse(fs.readFileSync(easJsonPath, 'utf8'));
+        if (easJson.cli?.appVersionSource === 'remote') {
+          isRemote = true;
+        }
+      } catch (e) {}
+    }
+
+    if (!isRemote) {
+      log.dim('EAS appVersionSource is not "remote" (default is local). Skipping remote fetch.');
+    } else {
+      log.info(`Fetching EAS versionCode (profile: ${profile})...`);
+      try {
+        const { stdout } = execaSync(
+          'eas',
+          ['build:version:get', '--platform', 'android', '--profile', profile, '--non-interactive'],
+          { cwd, encoding: 'utf8', reject: false }
+        );
+        const match = stdout.match(/Android versionCode\s*[-–]\s*(\d+)/i);
+        if (match) {
+          nextCode = parseInt(match[1], 10) + 1;
+          log.ok(`EAS versionCode: ${match[1]} → ${nextCode}`);
+        } else {
+          log.warn(`Could not parse EAS versionCode; falling back to local bump`);
+        }
+      } catch (err: any) {
+        log.warn(`EAS version fetch failed. (Ensure project is linked and built on EAS)`);
       }
-    } catch (err: any) {
-      log.warn(`EAS version fetch failed: ${err?.message || err}`);
     }
   }
 
