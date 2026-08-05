@@ -17,6 +17,7 @@
   const btnStopBuild = document.getElementById('btn-stop-build');
   const buildTimer = document.getElementById('build-timer');
   const buildErrorBanner = document.getElementById('build-error-banner');
+  const buildSettingsFields = document.getElementById('build-settings-fields');
   const logConsole = document.getElementById('log-console');
   const btnClearLog = document.getElementById('btn-clear-log');
   const artifactResult = document.getElementById('artifact-result');
@@ -296,6 +297,7 @@
     setupKeystoreTab();
     setupScaffoldTab();
     initSse();
+    setupBeforeUnloadWarning();
     fetchStatus();
     fetchDoctor();
     fetchKeystoreStatus();
@@ -340,6 +342,7 @@
   function setupPillSelector() {
     pillOpts.forEach((btn) => {
       btn.addEventListener('click', () => {
+        if (isBuilding) return;
         pillOpts.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         selectedKind = btn.getAttribute('data-val');
@@ -377,7 +380,7 @@
 
       if (data.buildStatus === 'building') {
         setBuildingState(true);
-      } else if (!isBuilding) {
+      } else {
         setBuildingState(false);
       }
     } catch {
@@ -404,6 +407,9 @@
 
   function setBuildingState(building) {
     isBuilding = building;
+    if (buildSettingsFields) {
+      buildSettingsFields.disabled = building;
+    }
     if (building) {
       statusPill.className = 'status-pill building';
       statusText.textContent = 'Building...';
@@ -504,6 +510,16 @@
     eventSource.onerror = () => {
       setTimeout(initSse, 3000);
     };
+  }
+
+  function setupBeforeUnloadWarning() {
+    window.addEventListener('beforeunload', (event) => {
+      if (isBuilding) {
+        event.preventDefault();
+        event.returnValue = '';
+        return '';
+      }
+    });
   }
 
   function appendLog(line, type = 'dim') {

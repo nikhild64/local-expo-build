@@ -851,3 +851,20 @@ body {
   .tab-btn { white-space: nowrap; padding: 10px 14px; }
   .auth-form-row { flex-direction: column; }
 }
+
+/* Build Settings Disabled / Ongoing State */
+.build-settings-fields {
+  border: none;
+  padding: 0;
+  margin: 0;
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+.build-settings-fields[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+  user-select: none;
+  filter: grayscale(40%);
+}
+

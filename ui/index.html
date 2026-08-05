@@ -97,45 +97,47 @@
 
               <div id="build-error-banner" class="alert danger" style="display: none;"></div>
 
-              <div class="form-group">
-                <label class="form-label">Artifact Format</label>
-                <div class="pill-selector">
-                  <button type="button" class="pill-opt active" id="btn-aab" data-val="aab">AAB (bundleRelease)</button>
-                  <button type="button" class="pill-opt" id="btn-apk" data-val="apk">APK (assembleRelease)</button>
+              <fieldset id="build-settings-fields" class="build-settings-fields">
+                <div class="form-group">
+                  <label class="form-label">Artifact Format</label>
+                  <div class="pill-selector">
+                    <button type="button" class="pill-opt active" id="btn-aab" data-val="aab">AAB (bundleRelease)</button>
+                    <button type="button" class="pill-opt" id="btn-apk" data-val="apk">APK (assembleRelease)</button>
+                  </div>
                 </div>
-              </div>
 
-              <div class="form-group">
-                <label class="form-label" for="build-profile">EAS Profile</label>
-                <input type="text" id="build-profile" class="form-input" value="production" placeholder="production">
-                <span class="form-hint">Used for fetching next versionCode from EAS</span>
-              </div>
-
-              <div class="form-group checkbox-group">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="opt-clean">
-                  <span>Clean <code>android/</code> before prebuild (<code>--clean</code>)</span>
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="opt-no-bump">
-                  <span>Skip version bump (<code>--no-bump</code>)</span>
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="opt-no-sync">
-                  <span>Skip EAS versionCode sync (<code>--no-sync</code>)</span>
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="opt-no-prebuild">
-                  <span>Skip expo prebuild (<code>--no-prebuild</code>)</span>
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="opt-debug">
-                  <span>Debug build (debug keystore — no EAS, no version bump, no signing setup)</span>
-                </label>
-                <div class="form-hint" style="margin-top: 8px; padding: 10px 12px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
-                  <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: -2px; margin-right: 4px; fill: currentColor;"><path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/></svg><strong>No signing key ready?</strong> Check <em>Debug build</em> to build an APK instantly using Android's auto-generated debug key without needing release credentials.
+                <div class="form-group">
+                  <label class="form-label" for="build-profile">EAS Profile</label>
+                  <input type="text" id="build-profile" class="form-input" value="production" placeholder="production">
+                  <span class="form-hint">Used for fetching next versionCode from EAS</span>
                 </div>
-              </div>
+
+                <div class="form-group checkbox-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="opt-clean">
+                    <span>Clean <code>android/</code> before prebuild (<code>--clean</code>)</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="opt-no-bump">
+                    <span>Skip version bump (<code>--no-bump</code>)</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="opt-no-sync">
+                    <span>Skip EAS versionCode sync (<code>--no-sync</code>)</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="opt-no-prebuild">
+                    <span>Skip expo prebuild (<code>--no-prebuild</code>)</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="opt-debug">
+                    <span>Debug build (debug keystore — no EAS, no version bump, no signing setup)</span>
+                  </label>
+                  <div class="form-hint" style="margin-top: 8px; padding: 10px 12px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 12px; color: var(--text-secondary); line-height: 1.4;">
+                    <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: -2px; margin-right: 4px; fill: currentColor;"><path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/></svg><strong>No signing key ready?</strong> Check <em>Debug build</em> to build an APK instantly using Android's auto-generated debug key without needing release credentials.
+                  </div>
+                </div>
+              </fieldset>
             </form>
           </div>
 
