@@ -101,6 +101,8 @@
   let easKeystores = [];
   let doctorRequest = null;
   let currentStatusData = null;
+  let currentStageIndex = 1;
+  let currentPercentage = 0;
 
   // ── Custom Modal Dialog Manager ──
   function showModal({

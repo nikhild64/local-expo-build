@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import readline from 'readline';
 import { execa } from 'execa';
 import { log } from '../util/log';
@@ -13,6 +15,20 @@ export interface PrebuildOpts {
 }
 
 export async function prebuild({ cwd, clean = false, maxRam, onLine, signal }: PrebuildOpts): Promise<void> {
+  const isWin = process.platform === 'win32';
+  if (isWin) {
+    const androidDir = path.join(cwd, 'android');
+    const wrapper = path.join(androidDir, 'gradlew.bat');
+    if (fs.existsSync(wrapper)) {
+      try {
+        log.dim('Stopping Gradle daemon to release file locks before prebuild...');
+        await execa(wrapper, ['--stop'], { cwd: androidDir, stdio: 'ignore' });
+      } catch (e) {
+        // ignore
+      }
+    }
+  }
+
   const args = ['prebuild', '--platform', 'android', '--non-interactive'];
   if (clean) args.push('--clean');
   log.info(`expo ${args.join(' ')}`);
