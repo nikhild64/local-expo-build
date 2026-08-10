@@ -18,6 +18,7 @@ import { findRehydrateCandidate } from '../core/keystore/rehydrate';
 import crypto from 'crypto';
 import { readExpoConfig, invalidateExpoConfigCache } from '../core/expoConfig';
 import { generateKeystore } from '../core/keystore/generate';
+import { ensureRemoteAppVersionSource } from '../core/eas/configure';
 
 export type CheckResult = { name: string; ok: boolean; detail?: string; warn?: boolean };
 
@@ -920,6 +921,7 @@ export async function runDoctor({
     if (needsEasConfigFix) {
       try {
         await execa('eas', ['build:configure', '--platform', 'android'], { cwd, stdio: 'inherit' });
+        ensureRemoteAppVersionSource(cwd);
         log.ok('eas.json created.');
         currentEasLink = detectEasLink(cwd);
         replaceResultByName(results, 'EAS project linked', easLinkCheck(currentEasLink));
@@ -1014,6 +1016,7 @@ export async function runDoctor({
       if (yes) {
         try {
           await execa('eas', ['build:configure', '--platform', 'android'], { cwd, stdio: 'inherit' });
+          ensureRemoteAppVersionSource(cwd);
           log.ok('eas.json created.');
           currentEasLink = detectEasLink(cwd);
           replaceResultByName(results, 'EAS project linked', easLinkCheck(currentEasLink));

@@ -145,14 +145,16 @@ describe('UI HTTP Server REST endpoints', () => {
     assert.strictEqual(typeof data.authenticated, 'boolean');
   });
 
-  it('leaves an existing eas.json unchanged without invoking EAS CLI', async () => {
+  it('injects appVersionSource remote into an existing eas.json without invoking EAS CLI', async () => {
     const easPath = path.join(dir, 'eas.json');
     const initial = '{\n  "build": { "production": {} }\n}\n';
     fs.writeFileSync(easPath, initial);
     const response = await fetch(`${serverInstance.url}/api/eas/configure`, { method: 'POST' });
     assert.strictEqual(response.status, 200);
     assert.strictEqual((await response.json()).created, false);
-    assert.strictEqual(fs.readFileSync(easPath, 'utf8'), initial);
+    const updated = JSON.parse(fs.readFileSync(easPath, 'utf8'));
+    assert.strictEqual(updated.cli.appVersionSource, 'remote');
+    assert.deepStrictEqual(updated.build, { production: {} });
   });
 
   it('rejects EAS linking without a project selection', async () => {

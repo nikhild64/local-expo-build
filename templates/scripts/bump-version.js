@@ -45,9 +45,29 @@ if (appJson.expo.extra?.eas?.projectId) {
     if (m) {
       nextCode = parseInt(m[1], 10) + 1;
       console.log(`EAS versionCode: ${m[1]} → ${nextCode}`);
+    } else {
+      console.warn('Could not parse EAS versionCode; falling back to local bump');
     }
   } catch (e) {
-    console.warn('EAS version fetch failed:', e.message);
+    // Never built on EAS yet — `build:version:get` fails. Seed the remote
+    // version with the local versionCode first, then bump from it.
+    const gradleText = fs.existsSync(GRADLE) ? fs.readFileSync(GRADLE, 'utf8') : '';
+    const m = gradleText.match(/\bversionCode\s+(\d+)/);
+    const localCode = m ? parseInt(m[1], 10) : null;
+    if (localCode == null) {
+      console.warn('Could not read local versionCode; falling back to local bump');
+    } else {
+      try {
+        execSync(
+          `eas build:version:set --platform android --profile ${PROFILE} --version-code ${localCode} --version-name ${current} --non-interactive`,
+          { cwd: path.resolve(__dirname, '..'), encoding: 'utf8' }
+        );
+        nextCode = localCode + 1;
+        console.log(`Seeded EAS versionCode ${localCode} (first build) → ${nextCode}`);
+      } catch (setErr) {
+        console.warn('EAS version set failed. (Ensure project is linked and authenticated)');
+      }
+    }
   }
 }
 

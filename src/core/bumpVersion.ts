@@ -51,6 +51,7 @@ export function bumpVersion({
   }
 
   let nextCode: number | null = null;
+  let gradle = fs.readFileSync(gradlePath, 'utf8');
   if (!skipEas && appJson.expo?.extra?.eas?.projectId) {
     const easJsonPath = path.join(cwd, 'eas.json');
     let isRemote = false;
@@ -67,26 +68,52 @@ export function bumpVersion({
       log.dim('EAS appVersionSource is not "remote" (default is local). Skipping remote fetch.');
     } else {
       log.info(`Fetching EAS versionCode (profile: ${profile})...`);
-      try {
-        const { stdout } = execaSync(
-          'eas',
-          ['build:version:get', '--platform', 'android', '--profile', profile, '--non-interactive'],
-          { cwd, encoding: 'utf8', reject: false }
-        );
-        const match = stdout.match(/Android versionCode\s*[-–]\s*(\d+)/i);
-        if (match) {
-          nextCode = parseInt(match[1], 10) + 1;
-          log.ok(`EAS versionCode: ${match[1]} → ${nextCode}`);
+      const result = execaSync(
+        'eas',
+        ['build:version:get', '--platform', 'android', '--profile', profile, '--non-interactive'],
+        { cwd, encoding: 'utf8', reject: false }
+      );
+      const match = result.stdout.match(/Android versionCode\s*[-–]\s*(\d+)/i);
+      if (result.exitCode === 0 && match) {
+        nextCode = parseInt(match[1], 10) + 1;
+        log.ok(`EAS versionCode: ${match[1]} → ${nextCode}`);
+      } else if (result.exitCode !== 0) {
+        // Never built on EAS yet — `build:version:get` fails. Seed the remote
+        // version with the local versionCode first, then bump from it.
+        const cur = gradle.match(/\bversionCode\s+(\d+)/);
+        const localCode = cur ? parseInt(cur[1], 10) : null;
+        if (localCode == null) {
+          log.warn('Could not read local versionCode; falling back to local bump');
         } else {
-          log.warn(`Could not parse EAS versionCode; falling back to local bump`);
+          try {
+            execaSync(
+              'eas',
+              [
+                'build:version:set',
+                '--platform',
+                'android',
+                '--profile',
+                profile,
+                '--version-code',
+                String(localCode),
+                '--version-name',
+                currentVersion,
+                '--non-interactive',
+              ],
+              { cwd, encoding: 'utf8' }
+            );
+            nextCode = localCode + 1;
+            log.ok(`Seeded EAS versionCode ${localCode} (first build) → ${nextCode}`);
+          } catch (err: any) {
+            log.warn(`EAS version set failed. (Ensure project is linked and authenticated)`);
+          }
         }
-      } catch (err: any) {
-        log.warn(`EAS version fetch failed. (Ensure project is linked and built on EAS)`);
+      } else {
+        log.warn(`Could not parse EAS versionCode; falling back to local bump`);
       }
     }
   }
 
-  let gradle = fs.readFileSync(gradlePath, 'utf8');
   if (nextCode == null) {
     const cur = gradle.match(/\bversionCode\s+(\d+)/);
     nextCode = cur ? parseInt(cur[1], 10) + 1 : 1;

@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { confirm } from '@inquirer/prompts';
 import { log } from '../../util/log';
 import { detectEasLink, isEasReady } from '../easLink';
+import { ensureRemoteAppVersionSource } from '../eas/configure';
 
 /**
  * Fetches Android signing credentials from EAS.
@@ -109,6 +110,7 @@ async function ensureEasReady(cwd: string): Promise<void> {
       );
     }
     await runEas(cwd, ['build:configure', '--platform', 'android'], 'eas build:configure');
+    ensureRemoteAppVersionSource(cwd);
     link = detectEasLink(cwd);
   }
 
