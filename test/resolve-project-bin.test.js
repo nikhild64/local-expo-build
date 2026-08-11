@@ -6,6 +6,7 @@ const path = require('path');
 
 const {
   detectPackageManager,
+  formatCliCommand,
   formatRunScript,
   resolveProjectBin,
 } = require('../dist/util/resolveProjectBin');
@@ -72,5 +73,21 @@ describe('formatRunScript', () => {
 
   it('formats yarn scripts', () => {
     assert.equal(formatRunScript('yarn', 'build:android:aab'), 'yarn build:android:aab');
+  });
+});
+
+describe('formatCliCommand (D11)', () => {
+  it('uses npx by default', () => {
+    assert.equal(formatCliCommand('npm'), 'npx local-expo-build');
+    assert.equal(formatCliCommand('npm', 'doctor'), 'npx local-expo-build doctor');
+  });
+
+  it('uses bunx for bun projects', () => {
+    assert.equal(formatCliCommand('bun', 'update-scripts'), 'bunx local-expo-build update-scripts');
+  });
+
+  it('uses dlx for pnpm and yarn projects', () => {
+    assert.equal(formatCliCommand('pnpm', 'init'), 'pnpm dlx local-expo-build init');
+    assert.equal(formatCliCommand('yarn', 'init'), 'yarn dlx local-expo-build init');
   });
 });

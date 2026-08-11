@@ -6,7 +6,12 @@ import kleur from 'kleur';
 import { confirm, input } from '@inquirer/prompts';
 import { getCtx } from '../util/ctx';
 import { log } from '../util/log';
-import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
+import {
+  detectPackageManager,
+  formatCliCommand,
+  projectBinExecArgs,
+  resolveProjectBin,
+} from '../util/resolveProjectBin';
 import { maybePromptScriptUpdate } from '../util/maybePromptScriptUpdate';
 import { compareScripts } from '../core/scaffoldScripts';
 import { detectExpoSdk } from '../core/sdkDetect';
@@ -369,6 +374,8 @@ interface SuggestionCtx {
   ks: KeystorePropsCheck;
   jks: CheckResult;
   cred: CredentialsJsonCheck;
+  /** PM-aware CLI invocation prefix, e.g. `npx local-expo-build`. */
+  cliCmd: string;
 }
 
 function suggestPackageName(appJson: any): string {
@@ -437,7 +444,7 @@ async function offerAndroidPackageFix(
   return true;
 }
 
-function buildSuggestions({ androidPkg, easLink, ks, jks, cred }: SuggestionCtx): string[] {
+function buildSuggestions({ androidPkg, easLink, ks, jks, cred, cliCmd }: SuggestionCtx): string[] {
   const out: string[] = [];
 
   if (!androidPkg.result.ok && androidPkg.source === 'app.json') {
@@ -459,15 +466,15 @@ function buildSuggestions({ androidPkg, easLink, ks, jks, cred }: SuggestionCtx)
     // Prefer rehydrate when credentials.json + .jks are already on disk —
     // it's one prompt and no password re-entry.
     if (jks.warn && /keystore rehydrate/.test(jks.detail || '')) {
-      out.push('Rehydrate from credentials.json:         npx local-expo-build keystore rehydrate');
+      out.push(`Rehydrate from credentials.json:         ${cliCmd} keystore rehydrate`);
     } else {
-      out.push('Set up the signing keystore:             npx local-expo-build keystore setup');
+      out.push(`Set up the signing keystore:             ${cliCmd} keystore setup`);
     }
   } else if (!ks.props) {
     out.push('Finish keystore.properties:              fill in storePassword / keyPassword (no FILL_IN)');
   } else if (jks.warn) {
     out.push(
-      'Add the .jks file:                       npx local-expo-build keystore create | import | fetch | rehydrate'
+      `Add the .jks file:                       ${cliCmd} keystore create | import | fetch | rehydrate`
     );
   }
   if (cred.result.warn && !cred.exists) {
@@ -886,12 +893,14 @@ export async function runDoctor({
   }
   console.log('');
 
+  const cliCmd = formatCliCommand(detectPackageManager(cwd));
   const suggestions = buildSuggestions({
     androidPkg,
     easLink,
     ks: ksProps,
     jks: jksResult,
     cred: credResult,
+    cliCmd,
   });
   if (suggestions.length) {
     console.log(kleur.bold('Suggested next steps to complete setup:'));
@@ -902,7 +911,7 @@ export async function runDoctor({
   if (outdatedScripts.length) {
     console.log(kleur.bold('Scaffolded script updates:'));
     console.log(
-      `  ${kleur.cyan('1.')} Refresh scripts: npx local-expo-build update-scripts`
+      `  ${kleur.cyan('1.')} Refresh scripts: ${cliCmd} update-scripts`
     );
     console.log('');
   }
@@ -1081,7 +1090,7 @@ export async function runDoctor({
           log.error(`Rehydrate failed: ${err?.message || err}`);
         }
       } else {
-        log.dim('Skipped. Run later: npx local-expo-build keystore rehydrate');
+        log.dim(`Skipped. Run later: ${cliCmd} keystore rehydrate`);
       }
       console.log('');
     }
@@ -1109,7 +1118,7 @@ export async function runDoctor({
           log.error(`Keystore setup failed: ${err?.message || err}`);
         }
       } else {
-        log.dim('Skipped. Run later: npx local-expo-build keystore setup');
+        log.dim(`Skipped. Run later: ${cliCmd} keystore setup`);
       }
       console.log('');
     }
