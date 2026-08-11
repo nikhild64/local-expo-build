@@ -129,7 +129,10 @@ describe('UI HTTP Server REST endpoints', () => {
 
   beforeEach(async () => {
     dir = tmpProject();
-    serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false });
+    // quiet: server startup logs interleave with node:test's stdout protocol on
+    // Windows and intermittently corrupt the runner stream ("Unable to
+    // deserialize cloned data").
+    serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false, quiet: true });
   });
 
   afterEach(async () => {
@@ -279,7 +282,7 @@ describe('UI server shutdown and mid-build keystore locks (B4/B10)', () => {
     fs.mkdirSync(androidDir, { recursive: true });
     fs.writeFileSync(path.join(androidDir, 'gradlew'), '#!/bin/sh\nsleep 3\n', { mode: 0o755 });
     fs.writeFileSync(path.join(androidDir, 'gradlew.bat'), '@echo off\r\nping -n 4 127.0.0.1 >nul\r\n');
-    serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false });
+    serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false, quiet: true });
   });
 
   afterEach(async () => {
