@@ -6,7 +6,7 @@ import net from 'net';
 import Busboy from 'busboy';
 import { log } from '../util/log';
 import { runAndroidBuild } from '../core/androidBuild';
-import { collectDoctorChecks, setAndroidPackage, rehydrateKeystore } from '../commands/doctor';
+import { collectDoctorChecks, setAndroidPackage } from '../commands/doctor';
 import { readKeystoreProps } from '../core/setupSigning';
 import {
   generateKeystore,
@@ -20,6 +20,7 @@ import { EasApiError, EasAuth, resolveEasAuth } from '../core/eas/api';
 import { EAS_PROJECT_NAME, createProject, getEasViewer, listProjects, writeProjectIdToAppJson } from '../core/eas/link';
 import { configureEasProject } from '../core/eas/configure';
 import { fetchEasKeystore, listEasKeystores, uploadLocalKeystoreToEas } from '../core/keystore/easApiFetch';
+import { autoGenerateKeystore, autoSetupKeystore } from '../core/keystore/autoSetup';
 import { compareScripts, readPackageScripts, scaffoldProject } from '../core/scaffoldScripts';
 
 export interface UiServerOpts {
@@ -322,6 +323,27 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           res.writeHead(200); res.end(JSON.stringify({ success: true, ...result })); return;
         }
 
+        if (req.method === 'POST' && pathname === '/api/keystore/auto-setup') {
+          serverLog('Auto-setting up Android signing keystore (rehydrate → EAS fetch → generate)');
+          if (activeBuild) {
+            res.writeHead(409);
+            res.end(JSON.stringify({ error: 'Cannot modify the keystore while a build is running.' }));
+            return;
+          }
+          const link = detectEasLink(cwd);
+          const result = await withEasOperation(() =>
+            autoSetupKeystore(cwd, {
+              projectId: link.kind === 'linked' ? link.projectId : undefined,
+              auth: currentEasAuth(),
+            })
+          );
+          broadcastSse('keystore-updated', {});
+          serverLog(`Keystore auto-setup: ${result.provider} (${result.storeFile}, alias=${result.keyAlias})`);
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, ...result }));
+          return;
+        }
+
         if (req.method === 'POST' && pathname === '/api/eas/keystores/upload') {
           serverLog('Uploading local Android keystore to EAS');
           const link = detectEasLink(cwd);
@@ -343,19 +365,6 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           broadcastSse('doctor-updated', {});
           res.writeHead(200);
           res.end(JSON.stringify({ success: true, packageName: body.packageName }));
-          return;
-        }
-
-        if (req.method === 'POST' && pathname === '/api/doctor/rehydrate') {
-          if (activeBuild) {
-            res.writeHead(409);
-            res.end(JSON.stringify({ error: 'Cannot rehydrate the keystore while a build is running.' }));
-            return;
-          }
-          await withEasOperation(() => rehydrateKeystore(cwd));
-          broadcastSse('keystore-updated', {});
-          res.writeHead(200);
-          res.end(JSON.stringify({ success: true }));
           return;
         }
 
@@ -418,9 +427,23 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           }
           // Keystore mutations share the operation mutex with the EAS routes so
           // concurrent writes can't race on keystore.properties/credentials.json (D9).
+          let generated = {};
           await withEasOperation(async () => {
             if (provider === 'generate') {
-              await generateKeystore(cwd, body.params || {});
+              // No caller-supplied password → use the shared auto-generate
+              // defaults (autoSetup.ts) and return the shown-once password.
+              // The UI's "Generate New Keystore" (EAS tab) relies on this;
+              // the explicit Generate form always sends its own params.
+              if (body.params && body.params.storePassword) {
+                await generateKeystore(cwd, body.params);
+              } else {
+                const auto = await autoGenerateKeystore(cwd, body.params || {});
+                generated = {
+                  storeFile: auto.storeFile,
+                  keyAlias: auto.keyAlias,
+                  generatedPassword: auto.generatedPassword,
+                };
+              }
             } else if (provider === 'import') {
               await importExistingKeystore(cwd, body.params || {});
             } else {
@@ -430,7 +453,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
 
           broadcastSse('keystore-updated', {});
           res.writeHead(200);
-          res.end(JSON.stringify({ success: true }));
+          res.end(JSON.stringify({ success: true, ...generated }));
           return;
         }
 

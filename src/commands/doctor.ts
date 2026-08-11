@@ -20,9 +20,8 @@ import { detectEasLink, isEasReady, EasLinkResult } from '../core/easLink';
 import { readKeystoreProps, KeystoreProps } from '../core/setupSigning';
 import { ensureKeystore } from '../core/keystore';
 import { findRehydrateCandidate } from '../core/keystore/rehydrate';
-import crypto from 'crypto';
+import { autoSetupKeystore } from '../core/keystore/autoSetup';
 import { readExpoConfig, invalidateExpoConfigCache } from '../core/expoConfig';
-import { generateKeystore } from '../core/keystore/generate';
 import { ensureRemoteAppVersionSource } from '../core/eas/configure';
 
 export type CheckResult = { name: string; ok: boolean; detail?: string; warn?: boolean };
@@ -530,10 +529,6 @@ export function setAndroidPackage(cwd: string, packageName: string): void {
   invalidateExpoConfigCache(cwd);
 }
 
-export async function rehydrateKeystore(cwd: string): Promise<void> {
-  await ensureKeystore(cwd, 'rehydrate');
-}
-
 export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
   // When the 8s safety net fires, abort the in-flight environment probes so
   // they stop promptly instead of continuing in the background, and return a
@@ -971,30 +966,24 @@ export async function runDoctor({
     }
 
     if (needsKeystoreFix) {
-      if (findRehydrateCandidate(cwd)) {
-        try {
-          await ensureKeystore(cwd, 'rehydrate');
-          log.ok('Keystore rehydrated from credentials.json.');
-        } catch (err: any) {
-          log.error(`Rehydrate failed: ${err?.message || err}`);
+      // Shared auto-setup chain (rehydrate → EAS fetch → generate) — the same
+      // implementation the browser UI's /api/keystore/auto-setup route uses.
+      try {
+        const link = detectEasLink(cwd);
+        const result = await autoSetupKeystore(cwd, {
+          projectId: link.kind === 'linked' ? link.projectId : undefined,
+        });
+        for (const w of result.warnings) log.dim(`Keystore auto-setup: ${w}`);
+        if (result.provider === 'existing') {
+          log.ok('Keystore already configured.');
+        } else {
+          log.ok(`Keystore configured via ${result.provider} (${result.storeFile}, alias=${result.keyAlias}).`);
         }
-      } else {
-        try {
-          const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
-          await generateKeystore(cwd, {
-            filename: 'release.p12',
-            keyAlias: 'release',
-            storePassword: pass,
-            keyPassword: pass,
-            cn: 'Release Signer',
-            org: 'LocalExpoBuild',
-            country: 'US',
-          });
-          log.ok('Generated release.p12 keystore & credentials.json.');
-          log.warn(`SAVE THIS GENERATED KEYSTORE PASSWORD (shown once): ${pass}`);
-        } catch (err: any) {
-          log.error(`Keystore generation failed: ${err?.message || err}`);
+        if (result.generatedPassword) {
+          log.warn(`SAVE THIS GENERATED KEYSTORE PASSWORD (shown once): ${result.generatedPassword}`);
         }
+      } catch (err: any) {
+        log.error(`Keystore setup failed: ${err?.message || err}`);
       }
       const after = keystorePropsCheck(cwd);
       replaceResultByName(results, 'keystore.properties', after.result);
