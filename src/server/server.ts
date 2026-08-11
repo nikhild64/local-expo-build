@@ -397,6 +397,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           }
           const bb = Busboy({ headers: req.headers, limits: { fileSize: 5 * 1024 * 1024 } });
           let tmpPath = '';
+          let originalFilename = '';
           let keyAlias = '';
           let storePassword = '';
           let keyPassword = '';
@@ -405,6 +406,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
 
           bb.on('file', (fieldname, file, info) => {
             const { filename } = info;
+            originalFilename = path.basename(filename);
             const ext = path.extname(filename).toLowerCase();
             if (ext !== '.jks' && ext !== '.keystore' && ext !== '.p12') {
               uploadError = 'Invalid file extension. Only .jks, .keystore, and .p12 files are accepted.';
@@ -450,6 +452,10 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
             try {
               await importExistingKeystore(cwd, {
                 srcPath: tmpPath,
+                // Register under the original filename (not the temp upload
+                // path) so keystore.properties and credentials.json keep a
+                // stable, recognizable storeFile across re-uploads.
+                storeFile: originalFilename,
                 keyAlias: keyAlias || undefined,
                 storePassword: storePassword || undefined,
                 keyPassword: keyPassword || undefined,
