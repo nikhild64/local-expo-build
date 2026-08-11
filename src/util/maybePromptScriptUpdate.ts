@@ -6,6 +6,7 @@ import {
   hasScaffoldedScripts,
 } from '../core/scaffoldScripts';
 import { log } from './log';
+import { detectPackageManager, formatCliCommand } from './resolveProjectBin';
 
 export interface MaybePromptScriptUpdateOpts {
   cwd: string;
@@ -24,18 +25,20 @@ export async function maybePromptScriptUpdate(opts: MaybePromptScriptUpdateOpts)
   const outdated = getOutdatedScripts(opts.cwd);
   if (!outdated.length) return;
 
+  // Match the user's package manager (bun/pnpm/yarn/npm) in the hints.
+  const cliCmd = formatCliCommand(detectPackageManager(opts.cwd));
   const templateVersion = outdated[0].templateVersion || '?';
   log.warn(
     `${outdated.length} scaffolded script(s) are outdated (bundled v${templateVersion}).`
   );
 
   if (opts.dryRun) {
-    log.dim('Run: npx local-expo-build update-scripts');
+    log.dim(`Run: ${cliCmd} update-scripts`);
     return;
   }
 
   if (!process.stdin.isTTY) {
-    log.dim('Run: npx local-expo-build update-scripts --yes');
+    log.dim(`Run: ${cliCmd} update-scripts --yes`);
     return;
   }
 
@@ -44,7 +47,7 @@ export async function maybePromptScriptUpdate(opts: MaybePromptScriptUpdateOpts)
     default: true,
   });
   if (!shouldUpdate) {
-    log.dim('Skipped. Run later: npx local-expo-build update-scripts');
+    log.dim(`Skipped. Run later: ${cliCmd} update-scripts`);
     return;
   }
 

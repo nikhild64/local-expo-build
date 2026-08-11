@@ -9,6 +9,7 @@ import {
   compareScripts,
   TEMPLATE_SCRIPTS,
 } from '../core/scaffoldScripts';
+import { detectPackageManager, formatCliCommand } from '../util/resolveProjectBin';
 
 export function registerUpdateCommand(program: Command): void {
   program
@@ -17,6 +18,7 @@ export function registerUpdateCommand(program: Command): void {
     .option('-y, --yes', 'apply all updates without prompting')
     .action(async (opts, cmd) => {
       const { cwd, dryRun } = getCtx(cmd);
+      const cliCmd = formatCliCommand(detectPackageManager(cwd));
       log.step('local-expo-build update-scripts');
       log.dim(`Target: ${cwd}`);
 
@@ -44,7 +46,7 @@ export function registerUpdateCommand(program: Command): void {
 
       if (missing.length) {
         log.dim(
-          `${missing.length} script(s) missing — run \`npx local-expo-build init\` to scaffold them.`
+          `${missing.length} script(s) missing — run \`${cliCmd} init\` to scaffold them.`
         );
       }
 
@@ -67,7 +69,7 @@ export function registerUpdateCommand(program: Command): void {
         });
       } else if (!process.stdin.isTTY && !opts.yes) {
         log.warn('Non-TTY environment and --yes not passed; skipping update.');
-        log.dim(`Run: npx local-expo-build update-scripts --yes`);
+        log.dim(`Run: ${cliCmd} update-scripts --yes`);
         return;
       }
 

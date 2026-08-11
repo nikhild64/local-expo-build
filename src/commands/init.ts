@@ -8,7 +8,7 @@ import { detectExpoSdk } from '../core/sdkDetect';
 import { GRADLE_PIN } from '../core/pinGradle';
 import { ensureKeystore } from '../core/keystore';
 import { ensureGitignoreEntries } from '../util/gitignore';
-import { detectPackageManager, formatRunScript } from '../util/resolveProjectBin';
+import { detectPackageManager, formatCliCommand, formatRunScript } from '../util/resolveProjectBin';
 import { TEMPLATE_SCRIPTS } from '../core/scaffoldScripts';
 import { runDoctor } from './doctor';
 
@@ -29,6 +29,7 @@ export function registerInitCommand(program: Command): void {
     .option('--no-doctor', 'skip the pre-flight `doctor` run')
     .action(async (opts, cmd) => {
       const { cwd, dryRun } = getCtx(cmd);
+      const cliCmd = formatCliCommand(detectPackageManager(cwd));
       log.step('local-expo-build init');
       log.dim('One-time setup for local Expo Android builds · you keep full signing control');
       log.dim(`Target: ${cwd}`);
@@ -112,7 +113,7 @@ export function registerInitCommand(program: Command): void {
         if (wantsKs) {
           await ensureKeystore(cwd);
         } else {
-          log.dim('Skipping keystore setup. Run later: npx local-expo-build keystore setup');
+          log.dim(`Skipping keystore setup. Run later: ${cliCmd} keystore setup`);
         }
       }
 
@@ -121,6 +122,6 @@ export function registerInitCommand(program: Command): void {
       const pm = detectPackageManager(cwd);
       log.dim(`  ${formatRunScript(pm, 'build:android:aab')}    # build a release AAB`);
       log.dim(`  ${formatRunScript(pm, 'build:android:apk')}    # build a release APK`);
-      log.dim('  npx local-expo-build doctor  # re-run env checks any time');
+      log.dim(`  ${cliCmd} doctor  # re-run env checks any time`);
     });
 }

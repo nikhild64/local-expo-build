@@ -92,6 +92,24 @@ export function formatCliInvoke(pm: PackageManager, subcommand = ''): string {
   return `${command} ${args.join(' ')}${tail}`;
 }
 
+/**
+ * Format an ad-hoc invocation of the *installed* CLI for the detected package
+ * manager (used in hints like "Run: npx local-expo-build keystore setup").
+ */
+export function formatCliCommand(pm: PackageManager, subcommand = ''): string {
+  const tail = subcommand ? ` ${subcommand}` : '';
+  switch (pm) {
+    case 'bun':
+      return `bunx local-expo-build${tail}`;
+    case 'pnpm':
+      return `pnpm dlx local-expo-build${tail}`;
+    case 'yarn':
+      return `yarn dlx local-expo-build${tail}`;
+    default:
+      return `npx local-expo-build${tail}`;
+  }
+}
+
 /** Format a package.json script invocation for the detected package manager. */
 export function formatRunScript(pm: PackageManager, script: string): string {
   switch (pm) {

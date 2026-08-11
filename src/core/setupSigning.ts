@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { log } from '../util/log';
+import { detectPackageManager, formatCliCommand } from '../util/resolveProjectBin';
 import { writeCredentialsJson } from './writeCredentialsJson';
 
 export interface SetupSigningOpts {
@@ -86,12 +87,13 @@ function ensureKeystoreInAndroidApp(cwd: string, storeFile: string): void {
     const tried = candidates
       .map((p) => '  - ' + path.relative(cwd, p).replace(/\\/g, '/'))
       .join('\n');
+    const cliCmd = formatCliCommand(detectPackageManager(cwd));
     throw new Error(
       `Keystore file ${path.relative(cwd, dest).replace(/\\/g, '/')} not found, ` +
         `and no recovery source available.\nTried:\n${tried}\n\n` +
         `If your android/ directory was just wiped by \`expo prebuild --clean\`, ` +
-        `re-run \`npx local-expo-build keystore rehydrate\` (if you have credentials.json) ` +
-        `or \`npx local-expo-build keystore import <path-to-keystore>\` to restore it.`
+        `re-run \`${cliCmd} keystore rehydrate\` (if you have credentials.json) ` +
+        `or \`${cliCmd} keystore import <path-to-keystore>\` to restore it.`
     );
   }
 
