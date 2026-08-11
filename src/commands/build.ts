@@ -180,8 +180,11 @@ export function registerBuildCommand(program: Command): void {
       if (!project && !ctx.dryRun) {
         throw new Error(
           `Could not find a single .xcworkspace in ${path.join(ctx.cwd, 'ios')}. ` +
-            `Either prebuild hasn't run yet (drop --no-prebuild) or your project has ` +
-            `multiple workspaces (pass --scheme to disambiguate, and file an issue so we can handle multi-workspace projects).`
+            `Either prebuild hasn't run yet (drop --no-prebuild), or ios/ contains zero or ` +
+            `multiple workspaces. Expo's prebuild generates exactly one workspace named after ` +
+            `your app; if you see several (e.g. after a rename), delete the stale ones and ` +
+            `re-run prebuild. --scheme only selects the scheme inside an existing single ` +
+            `workspace, so it cannot disambiguate multiple workspaces.`
         );
       }
       const scheme = opts.scheme || project?.inferredScheme || '(unknown)';
