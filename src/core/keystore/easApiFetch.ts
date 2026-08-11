@@ -191,6 +191,17 @@ export async function uploadLocalKeystoreToEas(
   const props = readKeystoreProps(cwd);
   if (!props) throw new Error('No local keystore configuration (keystore.properties) found to upload.');
 
+  // Validate the application identifier up front so we fail before any network
+  // call or authentication round-trip — EAS cannot register a keystore without it.
+  const exp = readExpoConfig(cwd)?.config || {};
+  const pkg = exp.android?.package;
+  if (!pkg) {
+    throw new Error(
+      'Missing expo.android.package in your Expo config — EAS cannot register the keystore without the application identifier. ' +
+        'Set it in app.json first (or run `doctor` / fix the package name in the UI).'
+    );
+  }
+
   const candidatePaths = [
     path.join(cwd, 'android', 'app', props.storeFile),
     path.join(cwd, props.storeFile),
@@ -213,14 +224,6 @@ export async function uploadLocalKeystoreToEas(
 
   // 2. Resolve or Create AndroidAppCredentials Container
   const credsList = appData.androidAppCredentials || [];
-  const exp = readExpoConfig(cwd)?.config || {};
-  const pkg = exp.android?.package;
-  if (!pkg) {
-    throw new Error(
-      'Missing expo.android.package in your Expo config — EAS cannot register the keystore without the application identifier. ' +
-        'Set it in app.json first (or run `doctor` / fix the package name in the UI).'
-    );
-  }
   let matched = credsList.find((c: any) => c.applicationIdentifier === pkg);
   let androidAppCredentialsId = matched?.id || credsList[0]?.id || null;
 
