@@ -20,7 +20,7 @@ import { EasApiError, EasAuth, resolveEasAuth } from '../core/eas/api';
 import { EAS_PROJECT_NAME, createProject, getEasViewer, listProjects, writeProjectIdToAppJson } from '../core/eas/link';
 import { configureEasProject } from '../core/eas/configure';
 import { fetchEasKeystore, listEasKeystores, uploadLocalKeystoreToEas } from '../core/keystore/easApiFetch';
-import { autoGenerateKeystore, autoSetupKeystore } from '../core/keystore/autoSetup';
+import { autoGenerateKeystore, autoSetupKeystore, GENERATE_DEFAULTS } from '../core/keystore/autoSetup';
 import { compareScripts, readPackageScripts, scaffoldProject } from '../core/scaffoldScripts';
 
 export interface UiServerOpts {
@@ -388,6 +388,15 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           broadcastSse('doctor-updated', {});
           res.writeHead(200);
           res.end(JSON.stringify({ success: true, ...result }));
+          return;
+        }
+
+        if (req.method === 'GET' && pathname === '/api/keystore/defaults') {
+          // The single source of truth for generate defaults (filename, alias,
+          // identity). The UI prefills its explicit Generate form from here so
+          // no keystore defaults are hardcoded client-side.
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, defaults: GENERATE_DEFAULTS }));
           return;
         }
 

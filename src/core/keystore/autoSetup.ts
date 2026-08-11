@@ -61,7 +61,7 @@ export interface AutoSetupKeystoreResult {
   warnings: string[];
 }
 
-const GENERATE_DEFAULTS: GenerateKeystoreParams = {
+export const GENERATE_DEFAULTS: GenerateKeystoreParams = {
   filename: 'release.p12',
   keyAlias: 'release',
   cn: 'Release Signer',

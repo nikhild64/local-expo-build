@@ -464,6 +464,7 @@
     fetchStatus();
     fetchDoctor();
     fetchKeystoreStatus();
+    fetchKeystoreDefaults();
     fetchEasAuth();
     fetchScaffoldStatus();
   }
@@ -1055,9 +1056,9 @@
                 easUploadMsg = ' & uploaded to EAS Cloud';
               }
             } catch {}
-            fixesApplied.push(`Generated new release keystore (${data.storeFile || 'release.p12'}) — PASSWORD (shown once, save it): ${data.generatedPassword}${easUploadMsg}`);
+            fixesApplied.push(`Generated new release keystore (${data.storeFile}) — PASSWORD (shown once, save it): ${data.generatedPassword}${easUploadMsg}`);
           } else if (data.provider === 'eas') {
-            fixesApplied.push(`Fetched cloud release keystore (${data.storeFile || 'release.jks'}) & credentials.json from EAS`);
+            fixesApplied.push(`Fetched cloud release keystore (${data.storeFile}) & credentials.json from EAS`);
           } else if (data.provider === 'rehydrate') {
             fixesApplied.push('Synced credentials.json & keystore configuration');
           }
@@ -1529,18 +1530,24 @@
     // Generate Form
     formKsGenerate.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const payload = {
-        provider: 'generate',
-        params: {
-          filename: document.getElementById('gen-filename').value.trim() || 'release.p12',
-          keyAlias: document.getElementById('gen-alias').value.trim() || 'release',
-          storePassword: document.getElementById('gen-store-pass').value,
-          keyPassword: document.getElementById('gen-key-pass').value || document.getElementById('gen-store-pass').value,
-          cn: document.getElementById('gen-cn').value.trim() || 'Release Signer',
-          org: document.getElementById('gen-org').value.trim() || 'LocalExpoBuild',
-          country: document.getElementById('gen-country').value.trim() || 'US',
-        },
-      };
+      // Only user-provided (non-empty) values are sent; anything left blank is
+      // filled server-side from the shared GENERATE_DEFAULTS, so no keystore
+      // defaults are hardcoded client-side.
+      const params = {};
+      const genFilename = document.getElementById('gen-filename').value.trim();
+      if (genFilename) params.filename = genFilename;
+      const genAlias = document.getElementById('gen-alias').value.trim();
+      if (genAlias) params.keyAlias = genAlias;
+      const genCn = document.getElementById('gen-cn').value.trim();
+      if (genCn) params.cn = genCn;
+      const genOrg = document.getElementById('gen-org').value.trim();
+      if (genOrg) params.org = genOrg;
+      const genCountry = document.getElementById('gen-country').value.trim();
+      if (genCountry) params.country = genCountry;
+      const genStorePass = document.getElementById('gen-store-pass').value;
+      params.storePassword = genStorePass;
+      params.keyPassword = document.getElementById('gen-key-pass').value || genStorePass;
+      const payload = { provider: 'generate', params };
 
       try {
         const res = await fetch('/api/keystore/setup', {
@@ -1892,6 +1899,28 @@
       selectedFileName.textContent = `Selected: ${inputJksFile.files[0].name} (${(inputJksFile.files[0].size / 1024).toFixed(1)} KB)`;
     } else {
       selectedFileName.textContent = '';
+    }
+  }
+
+  async function fetchKeystoreDefaults() {
+    // Prefill the explicit Generate form from the server's GENERATE_DEFAULTS
+    // (GET /api/keystore/defaults) so no keystore defaults live in the client.
+    try {
+      const res = await fetch('/api/keystore/defaults');
+      if (!res.ok) return;
+      const data = await res.json();
+      const d = data.defaults || {};
+      const set = (id, v) => {
+        const el = document.getElementById(id);
+        if (el && v) el.value = v;
+      };
+      set('gen-filename', d.filename);
+      set('gen-alias', d.keyAlias);
+      set('gen-cn', d.cn);
+      set('gen-org', d.org);
+      set('gen-country', d.country);
+    } catch {
+      // Leave fields blank — empty values fall back to server defaults on submit.
     }
   }
 
