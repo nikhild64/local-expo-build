@@ -9,9 +9,9 @@ relevant message). B13 was a verification note only. Each fix was designed to
 preserve the existing flows (no flow redesign).
 
 Round 2 (below, section D) covers the remaining un-reviewed areas
-(`src/commands/ui.ts`, `src/server/*`, `src/util/*`) — findings D1–D12 are **filed**.
-D1–D6 are **fixed and committed** with regression tests (D1–D3 confirmed bugs,
-D4–D6 hardening); D7–D12 (minor) are still open.
+(`src/commands/ui.ts`, `src/server/*`, `src/util/*`) — findings D1–D12 are **all
+fixed and committed** with regression tests (D1–D3 confirmed bugs, D4–D6
+hardening, D7–D12 minor).
 
 ---
 
@@ -151,33 +151,33 @@ D4–D6 hardening); D7–D12 (minor) are still open.
 - **Fix:** append to existing values
   (`env.NODE_OPTIONS = [process.env.NODE_OPTIONS, '--max-old-space-size=…'].filter(Boolean).join(' ')`).
 
-### D7. 🔸 MINOR — `parseRamMb` edge cases (`src/util/ram.ts`)
+### D7. ✅ FIXED — `parseRamMb` edge cases (`src/util/ram.ts`)
 - `'0g'` / `'0m'` → `0` (falsy) → silently ignored with no message; no upper bound, so
   `999999g` flows into `-Xmx999998976m`. Validate `> 0` and cap (e.g. 64g) with a clear error.
 
-### D8. 🔸 MINOR — Uploaded `storeFile` is not sanitized
+### D8. ✅ FIXED — Uploaded `storeFile` is not sanitized
 - `/api/keystore/upload` registers the file under `path.basename(originalFilename)`;
   a name containing a single quote or other Groovy-breaking character breaks the
   injected `file('…')` signing config (build failure with a cryptic message).
   Sanitize to `[A-Za-z0-9._-]` or reject the upload.
 
-### D9. 🔸 MINOR — Keystore-mutating routes aren't in the `withEasOperation` mutex
+### D9. ✅ FIXED — Keystore-mutating routes aren't in the `withEasOperation` mutex
 - `/api/keystore/setup` + `/api/keystore/upload` are guarded by `activeBuild` (B10)
   but not by `withEasOperation`; two concurrent keystore mutations can race on
   `keystore.properties` / `credentials.json`. Wrap them in the same mutex as the EAS
   operations.
 
-### D10. 🔸 MINOR — Static-file read error is unhandled
+### D10. ✅ FIXED — Static-file read error is unhandled
 - The ui/ static handler has no `'error'` handler on `fs.createReadStream`: if a file
   vanishes between `existsSync` and open, the stream error is unhandled → process
   crash. Add an error handler that 404s.
 
-### D11. 🔸 MINOR — Hints hardcode `npx` while update-check detects the PM
+### D11. ✅ FIXED — Hints hardcode `npx` while update-check detects the PM
 - `maybePromptScriptUpdate.ts`, `doctor.ts` suggestions, and `update.ts` print
   `npx local-expo-build …`, but `checkCliUpdate` detects bun/pnpm/yarn/npm. Cosmetic
   inconsistency for non-npm users.
 
-### D12. 🔸 MINOR — `redactLogLine` partial redaction
+### D12. ✅ FIXED — `redactLogLine` partial redaction
 - `src/server/server.ts` `redactLogLine` only matches `key` + `=`/`:` + `\S+`;
   space-separated values (`storePassword mypass`) or quoted values with spaces are
   partially redacted or missed.
