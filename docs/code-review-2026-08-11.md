@@ -8,6 +8,10 @@ fixed and committed** (see commit history; each fix committed separately with a
 relevant message). B13 was a verification note only. Each fix was designed to
 preserve the existing flows (no flow redesign).
 
+Round 2 (below, section D) covers the remaining un-reviewed areas
+(`src/commands/ui.ts`, `src/server/*`, `src/util/*`) — findings D1–D12 are **filed but
+NOT yet fixed** (D1–D3 confirmed, D4–D6 hardening, D7–D12 minor).
+
 ---
 
 ## A. Confirmed bugs (code contradicts its own intent / README)
@@ -88,14 +92,117 @@ preserve the existing flows (no flow redesign).
 
 ---
 
-## C. Fix plan — DONE
+## D. Round 2 — remaining areas (`src/commands/ui.ts`, `src/server/*`, `src/util/*`)
+
+### D1. ⚠️ CONFIRMED — `keystore` subcommands ignore `--dry-run` and perform real writes
+- `src/commands/keystore.ts` — all five subcommands destructure only `{ cwd }` from
+  `getCtx(cmd)`; `dryRun` is discarded. `local-expo-build --dry-run keystore
+  create|import|fetch|rehydrate|setup` runs keytool, copies files, and writes
+  `keystore.properties` + `credentials.json` + `.gitignore` for real. Every other
+  command (`build`, `init`, interactive `doctor`, `update-scripts`) honors dry-run.
+- **Impact:** a dry-run that is supposed to print actions instead mutates the project
+  (and can generate a keystore).
+- **Fix:** at the command layer, when `ctx.dryRun` log the actions that would run and
+  return (or pass `dryRun` down to the providers). Keeps the interactive flow intact.
+
+### D2. ⚠️ CONFIRMED — `doctor --fix --dry-run` executes destructive fixes
+- `src/commands/doctor.ts` — `runAutoFixAll = fixAll === true` is **not** gated on
+  `dryRun`, so `doctor --fix --dry-run` writes `expo.android.package` into app.json
+  and auto-generates a keystore. The interactive path is correctly gated
+  (`interactive = process.stdin.isTTY && !dryRun`), so only the CI/fix-all path is
+  broken.
+- **Fix:** `runAutoFixAll = fixAll === true && !dryRun` (print a dry-run notice when
+  `--fix --dry-run`).
+
+### D3. ⚠️ CONFIRMED — Unwritable npm-registry cache dir crashes every CLI command
+- `src/util/checkCliUpdate.ts` — `resolveLatestPublishedVersion()` calls `writeCache()`
+  (`fs.mkdirSync` + `fs.writeFileSync` under `os.homedir()/.cache/…`) with no
+  try/catch. `maybePromptCliUpdate` is awaited unguarded in the `cli.ts` preAction
+  hook, so the throw propagates to `parseAsync().catch` → every command fails with
+  `local-expo-build failed` and exit 1.
+- **Reproduced live:** `USERPROFILE=<path-to-a-file> node dist/cli.js doctor --dry-run`
+  → `Error: ENOTDIR … at writeCache` → command aborted. Same failure on read-only
+  HOME (Nix, sandboxed CI, read-only filesystems). The registry fetch is already
+  best-effort; the cache write must be too.
+- **Fix:** wrap `writeCache()` in try/catch inside `resolveLatestPublishedVersion`.
+
+### D4. 🔶 HARDENING — UI server can crash with unhandled EADDRINUSE
+- `src/server/server.ts` — `findAvailablePort` probes a net server, then the real
+  `http.createServer().listen()` runs with **no `'error'` listener** and the listen
+  promise never rejects on failure. Two `ui` instances started together (probe+listen
+  TOCTOU) or any bind race → unhandled `'error'` event → process crash.
+  Corroborated by the EADDRINUSE-on-3999 flake seen in the test suite.
+- **Fix:** add `server.on('error', …)` that rejects the listen promise (and/or retry
+  the next port), so a busy port fails cleanly instead of crashing.
+
+### D5. 🔶 HARDENING — Uploaded keystore temp file leaks on client abort
+- `/api/keystore/upload` cleans `tmpPath` on busboy `'error'` and on every `'finish'`
+  branch, but **not on premature request close** (client disconnects mid-upload). The
+  file stays in `os.tmpdir()` forever.
+- **Fix:** `req.on('close')` → if the upload didn't complete and `tmpPath` exists,
+  unlink it.
+
+### D6. 🔶 HARDENING — `--max-ram` clobbers the user's `GRADLE_OPTS` / `NODE_OPTIONS`
+- `src/core/gradleRun.ts` and `src/core/prebuild.ts` — when `maxRam` is set, `env` is
+  assigned wholesale (`env.GRADLE_OPTS = …`, `env.NODE_OPTIONS = …`), discarding
+  project/user values (e.g. `NODE_OPTIONS=--openssl-legacy-provider` or custom Gradle
+  args).
+- **Fix:** append to existing values
+  (`env.NODE_OPTIONS = [process.env.NODE_OPTIONS, '--max-old-space-size=…'].filter(Boolean).join(' ')`).
+
+### D7. 🔸 MINOR — `parseRamMb` edge cases (`src/util/ram.ts`)
+- `'0g'` / `'0m'` → `0` (falsy) → silently ignored with no message; no upper bound, so
+  `999999g` flows into `-Xmx999998976m`. Validate `> 0` and cap (e.g. 64g) with a clear error.
+
+### D8. 🔸 MINOR — Uploaded `storeFile` is not sanitized
+- `/api/keystore/upload` registers the file under `path.basename(originalFilename)`;
+  a name containing a single quote or other Groovy-breaking character breaks the
+  injected `file('…')` signing config (build failure with a cryptic message).
+  Sanitize to `[A-Za-z0-9._-]` or reject the upload.
+
+### D9. 🔸 MINOR — Keystore-mutating routes aren't in the `withEasOperation` mutex
+- `/api/keystore/setup` + `/api/keystore/upload` are guarded by `activeBuild` (B10)
+  but not by `withEasOperation`; two concurrent keystore mutations can race on
+  `keystore.properties` / `credentials.json`. Wrap them in the same mutex as the EAS
+  operations.
+
+### D10. 🔸 MINOR — Static-file read error is unhandled
+- The ui/ static handler has no `'error'` handler on `fs.createReadStream`: if a file
+  vanishes between `existsSync` and open, the stream error is unhandled → process
+  crash. Add an error handler that 404s.
+
+### D11. 🔸 MINOR — Hints hardcode `npx` while update-check detects the PM
+- `maybePromptScriptUpdate.ts`, `doctor.ts` suggestions, and `update.ts` print
+  `npx local-expo-build …`, but `checkCliUpdate` detects bun/pnpm/yarn/npm. Cosmetic
+  inconsistency for non-npm users.
+
+### D12. 🔸 MINOR — `redactLogLine` partial redaction
+- `src/server/server.ts` `redactLogLine` only matches `key` + `=`/`:` + `\S+`;
+  space-separated values (`storePassword mypass`) or quoted values with spaces are
+  partially redacted or missed.
+
+### Verified OK (do not "fix")
+- `/api/keystore/upload` with missing passwords throws a clear error instead of
+  hanging on a non-TTY prompt (verified `importExistingKeystore` params path).
+- `maybePromptScriptUpdate` skip wiring is correct in `build.ts` / `doctor.ts`
+  (`skip: ctx.skipUpdateCheck`).
+- A3 fix holds: `bumpVersion` bumps app.json only when gradle is missing; writes
+  gradle only when present. B2 fix holds: `ensureKeystoreInAndroidApp` re-syncs both
+  `keystore.properties` and `credentials.json`.
+- Static-file path-traversal guard is safe: `new URL().pathname` stays
+  percent-encoded, so fs never sees decoded `..`; encoded traversal resolves to a
+  non-existent name → index.html fallback.
+
+---
+
+## E. Fix plan — DONE
 
 1. ✅ **Security:** A1 + A5 (gitignore `*.p12` everywhere; keystore providers call `ensureGitignoreEntries` for both CLI and UI paths).
 2. ✅ **Correctness:** A2 (doctor row key), A3 (iOS bump tolerance), A4 (CLI keystore overwrite), A6 (surface generated password).
 3. ✅ **Hardening batch:** B1–B12 (each committed separately; B13 was a verification note).
 4. ✅ Regression tests for A1–A6 / B-series added (`test/bump-version.test.js`, `test/keystore.test.js`, extended `scaffold-scripts.test.js` and `ui-server.test.js`) — suite grew from 77 to 96 tests, all green. Writing them surfaced and fixed one more real bug in the upload route (a flush race + missing response on busboy errors).
 
-## D. Verification notes
-- Findings verified against current code (exact call sites noted above).
-- Existing tests do not exercise these paths — new tests required for A1–A6.
+## F. Verification notes
+- Round 1 findings verified against current code (exact call sites noted above).
+- Round 2 findings (D1–D12) verified against current code; D3 reproduced live.
 - No code changes were made during this review; all flows preserved.
