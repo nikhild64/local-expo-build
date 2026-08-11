@@ -6,6 +6,7 @@ import { registerKeystoreCommand } from './commands/keystore';
 import { registerDoctorCommand } from './commands/doctor';
 import { registerUpdateCommand } from './commands/update';
 import { registerUiCommand } from './commands/ui';
+import { runDefaultCommand } from './commands/init';
 import { maybePromptCliUpdate } from './util/checkCliUpdate';
 
 const pkg = require('../package.json');
@@ -44,6 +45,14 @@ registerKeystoreCommand(program);
 registerDoctorCommand(program);
 registerUpdateCommand(program);
 registerUiCommand(program);
+
+// Bare invocation (`local-expo-build` with no subcommand) should do something
+// useful instead of just printing usage: inside an Expo project it starts the
+// `init` setup wizard; anywhere else it prints a hint. `--help` / `--version`
+// and unknown commands are handled by commander before this action runs.
+program.action(async (_opts, cmd) => {
+  await runDefaultCommand(cmd);
+});
 
 program.hook('preAction', async (thisCommand, actionCommand) => {
   const argv = process.argv;

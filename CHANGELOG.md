@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bare invocation runs `init`.** `local-expo-build` with no subcommand now
+  starts the setup wizard automatically when run inside an Expo project
+  (equivalent to `local-expo-build init`); anywhere else it prints usage hints
+  instead of a bare help screen. Also fixes `init` crashing in non-interactive
+  shells: a failing doctor pre-flight now aborts with a clear message, and the
+  keystore prompt is skipped (with a hint) when stdin isn't a TTY.
 - **Direct EAS browser actions.** The local UI can now link an EAS project, create `eas.json`, and fetch Android keystores directly from Expo's GraphQL API. Browser keystore fetch no longer requires the manual `eas credentials` download followed by `keystore import` round-trip.
 - **Multipart `.jks` Uploads.** Direct `.jks` keystore file uploads via busboy multipart parser in the web interface.
 - **Non-interactive Keystore & Build Core APIs.** Extracted `runAndroidBuild`, `collectDoctorChecks`, and param-driven keystore setup functions (`generateKeystore`, `importExistingKeystore`, `rehydrateFromCredentialsJson`).
