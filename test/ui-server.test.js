@@ -270,6 +270,59 @@ describe('UI HTTP Server REST endpoints', () => {
   });
 });
 
+describe('keystore upload temp cleanup on abort (D5)', () => {
+  it('removes the temp upload file when the client disconnects mid-upload', async () => {
+    const dir = tmpProject();
+    const serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false, quiet: true });
+    const filename = `abort-${Date.now()}-${Math.random().toString(36).slice(2)}.jks`;
+    const boundary = '----abort-boundary';
+    const prefix = Buffer.from(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="jks"; filename="${filename}"\r\n` +
+        'Content-Type: application/octet-stream\r\n\r\n' +
+        'x'.repeat(512 * 1024),
+      'utf8'
+    );
+
+    try {
+      await new Promise((resolve) => {
+        const req = http.request(`${serverInstance.url}/api/keystore/upload`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            // Advertise much more than we send so the server keeps reading.
+            'Content-Length': prefix.length + 64 * 1024 * 1024,
+            Connection: 'close',
+          },
+        });
+        req.on('error', resolve);
+        req.on('close', resolve);
+        req.write(prefix);
+        // Give the server a tick to open the temp write stream, then abort.
+        setTimeout(() => req.destroy(), 100);
+      });
+
+      // The temp file (upload-<ts>-<filename> in os.tmpdir()) must be cleaned
+      // up — poll briefly to allow the cleanup to run.
+      let leftover = null;
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const matches = fs.readdirSync(os.tmpdir()).filter((f) => f.includes(filename));
+        if (matches.length === 0) {
+          leftover = null;
+          break;
+        }
+        leftover = matches;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.strictEqual(leftover, null, `temp upload file left behind: ${leftover}`);
+    } finally {
+      await serverInstance.close();
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+});
+
 describe('UI server shutdown and mid-build keystore locks (B4/B10)', () => {
   let dir;
   let serverInstance;
