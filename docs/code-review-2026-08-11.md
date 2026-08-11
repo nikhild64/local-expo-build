@@ -3,8 +3,10 @@
 Scope: full pass over `src/` (CLI + UI server) and `ui/` (browser frontend), plus the
 scaffolded `templates/scripts/*.js`. Baseline: `npm run test:only` → 77/77 pass.
 
-Status: **findings only — fixes not yet implemented.** Each fix below is designed to
-preserve the existing flows (no flow redesign).
+Status: A1–A6 and B3/B4/B5/B10/B11/B12 are **fixed and committed** (see commit
+history; each fix committed separately with a relevant message). Remaining items:
+B1, B2, B6, B7, B8, B9, B13. Each fix below is designed to preserve the existing
+flows (no flow redesign).
 
 ---
 
@@ -51,13 +53,13 @@ preserve the existing flows (no flow redesign).
 - `src/core/setupSigning.ts` `ensureKeystoreInAndroidApp`: when only an alternate-extension keystore (`release.jks` vs configured `release.p12`) exists in `android/app/`, it rewrites `keystore.properties` to the alternate name but never `credentials.json` (still points at the old name → EAS submit breaks). Same in `templates/scripts/setup-signing.js`.
 - Fix: re-sync `writeCredentialsJson` after the props swap.
 
-### B3. `/api/status` and `/api/keystore/status` return plaintext keystore passwords
+### B3. ✅ FIXED — `/api/status` and `/api/keystore/status` return plaintext keystore passwords
 - Served over HTTP; CORS is granted to any `127.0.0.1`/`localhost` origin, so any page served from localhost can read them. Local-trust by design, but redacting password fields (like `--logs` redaction) is cheap.
 
-### B4. UI-server shutdown mid-build
+### B4. ✅ FIXED — UI-server shutdown mid-build
 - Ctrl+C (`src/commands/ui.ts`) exits the process without aborting the running build → Gradle child killed mid-flight. Fix: `buildAbort?.abort()` in shutdown so the "Build stopped by user" path runs.
 
-### B5. `collectDoctorChecks` 8s timeout race
+### B5. ✅ FIXED — `collectDoctorChecks` 8s timeout race
 - `Promise.race` returns a partial, misleadingly-green "Environment check timeout" row while real checks keep running in the background. Mark it incomplete or cancel the in-flight checks.
 
 ### B6. iOS multi-workspace error message
@@ -72,13 +74,13 @@ preserve the existing flows (no flow redesign).
 ### B9. `uploadLocalKeystoreToEas` defaults missing package to `com.example.app`
 - `src/core/keystore/easApiFetch.ts` — silently registers the keystore under a placeholder application identifier on EAS. Require the package (doctor already gates it).
 
-### B10. Keystore mutations allowed mid-build (UI)
+### B10. ✅ FIXED — Keystore mutations allowed mid-build (UI)
 - `/api/keystore/fetch-eas` guards with `activeBuild` (409), but `/api/keystore/setup` and `/api/keystore/upload` don't — the user can swap `keystore.properties` while a build is running (build stays consistent because it read props once, but the post-build state is confusing).
 
-### B11. UI upload accepts `.p12` but server rejects it
+### B11. ✅ FIXED — UI upload accepts `.p12` but server rejects it
 - `ui/index.html` drop zone + `accept=".p12,.jks,.keystore"` vs server check allowing only `.jks`/`.keystore` (`src/server/server.ts`). Align the two.
 
-### B12. Keystore upload uses temp-filename as storeFile
+### B12. ✅ FIXED — Keystore upload uses temp-filename as storeFile
 - Uploaded files land as `upload-<timestamp>-<basename>.jks`; `keystore.properties` storeFile becomes that name, and re-uploads pile up copies in `android/app/` + project root. Derive a stable name from the original filename.
 
 ### B13. `collectDoctorChecks`/doctor UI not affected by A2
