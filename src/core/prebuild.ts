@@ -14,6 +14,20 @@ export interface PrebuildOpts {
   signal?: AbortSignal;
 }
 
+/**
+ * The `expo prebuild` CLI args. `--non-interactive` was removed from expo CLI
+ * (SDK 54+ warns "use $CI=1 instead"), so non-interactivity is handled by
+ * {@link prebuildEnv} setting CI=1 — supported on old and new SDKs alike.
+ */
+export function prebuildArgs(clean: boolean): string[] {
+  return ['prebuild', '--platform', 'android', ...(clean ? ['--clean'] : [])];
+}
+
+/** Environment for the spawned expo CLI — CI=1 is the supported non-interactive switch. */
+export function prebuildEnv(): Record<string, string | undefined> {
+  return { ...process.env, CI: '1' };
+}
+
 export async function prebuild({ cwd, clean = false, maxRam, onLine, signal }: PrebuildOpts): Promise<void> {
   const isWin = process.platform === 'win32';
   if (isWin) {
@@ -29,8 +43,7 @@ export async function prebuild({ cwd, clean = false, maxRam, onLine, signal }: P
     }
   }
 
-  const args = ['prebuild', '--platform', 'android', '--non-interactive'];
-  if (clean) args.push('--clean');
+  const args = prebuildArgs(clean);
   log.info(`expo ${args.join(' ')}`);
   const bin = resolveProjectBin('expo', cwd);
   if (!bin) {
@@ -40,7 +53,7 @@ export async function prebuild({ cwd, clean = false, maxRam, onLine, signal }: P
   }
   const { command, args: execArgs, execa: execaOpts } = projectBinExecArgs(bin, args);
   const ramMb = parseRamMb(maxRam);
-  const env: Record<string, string | undefined> = { ...process.env };
+  const env = prebuildEnv();
   if (ramMb) {
     // Append to any pre-existing NODE_OPTIONS instead of clobbering it (D6).
     env.NODE_OPTIONS = nodeOptionsWithRam(ramMb, env.NODE_OPTIONS);

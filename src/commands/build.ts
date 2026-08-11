@@ -286,14 +286,19 @@ export function registerBuildCommand(program: Command): void {
               'expo CLI not found — install dependencies in your project (`npm install`, `bun install`, etc.)'
             );
           }
+          // CI=1 replaces --non-interactive (removed in expo CLI for SDK 54+).
           const { command, args, execa: execaOpts } = projectBinExecArgs(bin, [
             'prebuild',
             '--platform',
             'ios',
-            '--non-interactive',
             ...(shouldCleanIos ? ['--clean'] : []),
           ]);
-          await execa(command, args, { cwd: ctx.cwd, stdio: 'inherit', ...execaOpts });
+          await execa(command, args, {
+            cwd: ctx.cwd,
+            stdio: 'inherit',
+            env: { ...process.env, CI: '1' },
+            ...execaOpts,
+          });
         }
       } else {
         log.dim('Skipping prebuild (--no-prebuild)');

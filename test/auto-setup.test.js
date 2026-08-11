@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { autoSetupKeystore, autoGenerateKeystore } = require('../dist/core/keystore/autoSetup.js');
+const { autoSetupKeystore, autoGenerateKeystore, findUnconfiguredKeystoreFile } = require('../dist/core/keystore/autoSetup.js');
 const { readKeystoreProps, writeKeystoreProps } = require('../dist/core/setupSigning.js');
 
 const rehydrateMod = require('../dist/core/keystore/rehydrate.js');
@@ -238,6 +238,51 @@ describe('autoSetupKeystore — local generation', () => {
       throw new Error('keytool not found');
     };
     await assert.rejects(() => autoSetupKeystore(dir), /keytool not found/);
+  });
+});
+
+describe('findUnconfiguredKeystoreFile — stray keystore file detection', () => {
+  it('returns the relative path of a .p12 in android/app', () => {
+    fs.mkdirSync(path.join(dir, 'android', 'app'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'android', 'app', 'release.p12'), 'fake');
+    assert.strictEqual(findUnconfiguredKeystoreFile(dir), 'android/app/release.p12');
+  });
+
+  it('matches .jks and is case-insensitive on the extension', () => {
+    fs.mkdirSync(path.join(dir, 'android', 'app'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'android', 'app', 'MyKey.JKS'), 'fake');
+    assert.strictEqual(findUnconfiguredKeystoreFile(dir), 'android/app/MyKey.JKS');
+  });
+
+  it('returns null when there is no android/app directory', () => {
+    assert.strictEqual(findUnconfiguredKeystoreFile(dir), null);
+  });
+
+  it('returns null when android/app holds only non-keystore files', () => {
+    fs.mkdirSync(path.join(dir, 'android', 'app'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'android', 'app', 'build.gradle'), 'x');
+    assert.strictEqual(findUnconfiguredKeystoreFile(dir), null);
+  });
+});
+
+describe('autoSetupKeystore — stray keystore file without properties', () => {
+  it('fails with guidance instead of generating over the existing file', async () => {
+    // android/app/release.p12 exists but keystore.properties and
+    // credentials.json do not — the password is unknowable, so the chain must
+    // stop and explain rather than run keytool into the collision.
+    fs.mkdirSync(path.join(dir, 'android', 'app'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'android', 'app', 'release.p12'), 'fake-keystore');
+
+    let generateCalled = false;
+    generateMod.generateKeystore = async () => {
+      generateCalled = true;
+    };
+
+    await assert.rejects(
+      () => autoSetupKeystore(dir),
+      /Found an existing keystore \(android\/app\/release\.p12\).*password is unknown/
+    );
+    assert.strictEqual(generateCalled, false, 'keytool must never run over an existing file');
   });
 });
 

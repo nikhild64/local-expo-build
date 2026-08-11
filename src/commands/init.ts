@@ -14,6 +14,7 @@ import { TEMPLATE_SCRIPTS } from '../core/scaffoldScripts';
 import { readKeystoreProps } from '../core/setupSigning';
 import { runDoctor } from './doctor';
 import { runBuildAndroid, BuildAndroidCliOpts } from './build';
+import { findUnconfiguredKeystoreFile } from '../core/keystore/autoSetup';
 
 const APK_CHAIN = 'node scripts/build.js apk';
 const AAB_CHAIN = 'node scripts/build.js aab';
@@ -46,7 +47,9 @@ export interface BuildNowDeps {
  * "Next steps" hints instead.
  */
 export async function maybePromptBuildNow(cmd: Command, deps: BuildNowDeps = {}): Promise<void> {
-  const ask = deps.confirm || ((message: string) => confirm({ message, default: false }));
+  // Enter proceeds — same as the other "continue?" prompts in the wizard
+  // (fix-all, keystore setup), so a bare return doesn't skip the build.
+  const ask = deps.confirm || ((message: string) => confirm({ message, default: true }));
   const choose = deps.select || ((opts) => select(opts));
   const run = deps.runBuild || runBuildAndroid;
 
@@ -172,8 +175,19 @@ export async function runInit(opts: InitCommandOpts, cmd: Command, deps: BuildNo
       // keystore — don't ask again (ensureKeystore would no-op anyway).
       log.dim('Keystore already configured — skipping keystore setup.');
     } else if (process.stdin.isTTY) {
+      // A keystore file without properties has an unknown password — say so
+      // instead of asking to "set up" a new one and failing on the collision.
+      const unconfigured = findUnconfiguredKeystoreFile(cwd);
+      if (unconfigured) {
+        log.warn(
+          `Found ${unconfigured} but no keystore.properties — its password is unknown. ` +
+            `Import it with its password, or delete it to generate a fresh keystore.`
+        );
+      }
       const wantsKs = await confirm({
-        message: 'Set up the Android signing keystore now?',
+        message: unconfigured
+          ? 'Configure the signing keystore now (bind the existing file or replace it)?'
+          : 'Set up the Android signing keystore now?',
         default: true,
       });
       if (wantsKs) {
