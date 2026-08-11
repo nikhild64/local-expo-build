@@ -1,13 +1,27 @@
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
-const { collectDoctorChecks, setAndroidPackage } = require('../dist/commands/doctor.js');
+const { collectDoctorChecks, setAndroidPackage, runDoctor } = require('../dist/commands/doctor.js');
 const { runAndroidBuild } = require('../dist/core/androidBuild.js');
 const { writeProjectIdToAppJson } = require('../dist/core/eas/link.js');
 const { startUiServer } = require('../dist/server/server.js');
+
+// Each server instance gets its own random port: undici's global agent pools
+// keep-alive connections per origin, so reusing a fixed port across tests makes
+// a fresh server inherit a stale pooled connection and fail with ECONNRESET.
+async function randomPort() {
+  return await new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
 
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'leb-ui-test-'));
@@ -115,7 +129,7 @@ describe('UI HTTP Server REST endpoints', () => {
 
   beforeEach(async () => {
     dir = tmpProject();
-    serverInstance = await startUiServer({ cwd: dir, port: 3999, openBrowser: false });
+    serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false });
   });
 
   afterEach(async () => {
@@ -183,5 +197,176 @@ describe('UI HTTP Server REST endpoints', () => {
     assert.strictEqual(res.status, 200);
     const data = await res.json();
     assert.strictEqual(data.configured, false);
+  });
+
+  it('redacts keystore passwords from status endpoints (B3)', async () => {
+    // Configure a keystore so the endpoints have props to expose.
+    fs.mkdirSync(path.join(dir, 'android', 'app'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'android', 'app', 'release.jks'), 'fake');
+    fs.writeFileSync(
+      path.join(dir, 'keystore.properties'),
+      ['storeFile=release.jks', 'storePassword=sp123', 'keyAlias=release', 'keyPassword=kp123'].join('\n')
+    );
+
+    const status = await (await fetch(`${serverInstance.url}/api/status`)).json();
+    assert.ok(status.keystoreProps);
+    assert.strictEqual(status.keystoreProps.storeFile, 'release.jks');
+    assert.ok(!('storePassword' in status.keystoreProps), 'storePassword must be redacted');
+    assert.ok(!('keyPassword' in status.keystoreProps), 'keyPassword must be redacted');
+
+    const ks = await (await fetch(`${serverInstance.url}/api/keystore/status`)).json();
+    assert.ok(ks.props);
+    assert.strictEqual(ks.props.storeFile, 'release.jks');
+    assert.ok(!('storePassword' in ks.props), 'storePassword must be redacted');
+    assert.ok(!('keyPassword' in ks.props), 'keyPassword must be redacted');
+  });
+
+  it('accepts a .p12 keystore upload and registers it under the original filename (B11/B12/A5)', async () => {
+    // Build the multipart body explicitly (deterministic bytes) instead of
+    // relying on undici's FormData encoding.
+    const boundary = '----regression-test-boundary';
+    const body = Buffer.from(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="jks"; filename="release.p12"\r\n` +
+        'Content-Type: application/octet-stream\r\n\r\n' +
+        'fake-p12-content\r\n' +
+        `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="keyAlias"\r\n\r\n' +
+        'release\r\n' +
+        `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="storePassword"\r\n\r\n' +
+        'sp123\r\n' +
+        `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="keyPassword"\r\n\r\n' +
+        'sp123\r\n' +
+        `--${boundary}--\r\n`,
+      'utf8'
+    );
+
+    const res = await fetch(`${serverInstance.url}/api/keystore/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body,
+    });
+    assert.strictEqual(res.status, 200, await res.text());
+
+    // B12: registered under the original filename, not the temp upload name
+    const props = fs.readFileSync(path.join(dir, 'keystore.properties'), 'utf8');
+    assert.match(props, /storeFile=release\.p12/);
+    assert.ok(fs.existsSync(path.join(dir, 'android', 'app', 'release.p12')), 'keystore copied to android/app');
+
+    // credentials.json mirrors the same path
+    const cred = JSON.parse(fs.readFileSync(path.join(dir, 'credentials.json'), 'utf8'));
+    assert.strictEqual(cred.android.keystore.keystorePath, 'android/app/release.p12');
+
+    // A5: secrets are gitignored after a UI-driven import
+    const gi = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
+    for (const entry of ['keystore.properties', '*.jks', '*.p12', 'credentials.json']) {
+      assert.ok(gi.includes(entry), `.gitignore should contain "${entry}"`);
+    }
+  });
+});
+
+describe('UI server shutdown and mid-build keystore locks (B4/B10)', () => {
+  let dir;
+  let serverInstance;
+
+  beforeEach(async () => {
+    dir = tmpProject();
+    // Fake android/ with sleeping gradle wrappers so a debug build stays
+    // "active" long enough to exercise the guards deterministically.
+    const androidDir = path.join(dir, 'android');
+    fs.mkdirSync(androidDir, { recursive: true });
+    fs.writeFileSync(path.join(androidDir, 'gradlew'), '#!/bin/sh\nsleep 3\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(androidDir, 'gradlew.bat'), '@echo off\r\nping -n 4 127.0.0.1 >nul\r\n');
+    serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false });
+  });
+
+  afterEach(async () => {
+    if (serverInstance) await serverInstance.close();
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  });
+
+  function startSleepingBuild() {
+    return fetch(`${serverInstance.url}/api/build`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ debug: true, prebuild: false, bump: false, sync: false }),
+    });
+  }
+
+  it('rejects keystore mutations with 409 while a build is running, then releases (B10)', async () => {
+    const start = await startSleepingBuild();
+    assert.strictEqual(start.status, 202);
+
+    const guarded = ['/api/keystore/setup', '/api/keystore/upload', '/api/doctor/rehydrate'];
+    for (const p of guarded) {
+      const res = await fetch(`${serverInstance.url}${p}`, { method: 'POST' });
+      assert.strictEqual(res.status, 409, `${p} should 409 while building`);
+    }
+
+    // Wait for the fake gradle run to finish, then the guards must be released.
+    await new Promise((r) => setTimeout(r, 4000));
+    for (const p of guarded) {
+      const res = await fetch(`${serverInstance.url}${p}`, { method: 'POST' });
+      assert.notStrictEqual(res.status, 409, `${p} should not 409 after the build`);
+    }
+  });
+
+  it('server close() aborts an in-flight build and resolves (B4)', async () => {
+    const start = await startSleepingBuild();
+    assert.strictEqual(start.status, 202);
+
+    // Closing while the build is active must abort it and resolve cleanly.
+    await serverInstance.close();
+    serverInstance = null;
+  });
+});
+
+describe('doctor --fix row replacement (A2)', () => {
+  it('replaces the Android package row instead of appending a stale one', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'leb-doctor-fix-'));
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'fix-app', version: '1.0.0', dependencies: { expo: '52.0.0' } }, null, 2)
+    );
+    // No expo.android.package on purpose.
+    fs.writeFileSync(
+      path.join(dir, 'app.json'),
+      JSON.stringify({ expo: { name: 'Fix App', slug: 'fix-app', version: '1.0.0' } }, null, 2)
+    );
+    // Configure a keystore so the fix-all path does not try to run keytool.
+    fs.mkdirSync(path.join(dir, 'android', 'app'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'android', 'app', 'release.jks'), 'fake');
+    fs.writeFileSync(
+      path.join(dir, 'keystore.properties'),
+      ['storeFile=release.jks', 'storePassword=sp123', 'keyAlias=release', 'keyPassword=kp123'].join('\n')
+    );
+    fs.writeFileSync(
+      path.join(dir, 'credentials.json'),
+      JSON.stringify({
+        android: { keystore: { keystorePath: 'android/app/release.jks', keystorePassword: 'sp123', keyAlias: 'release', keyPassword: 'kp123' } },
+      }, null, 2)
+    );
+
+    try {
+      const { results } = await runDoctor({ cwd: dir, dryRun: false, fixAll: true, skipUpdateCheck: true });
+
+      const pkgRows = results.filter((r) => r.name === 'Android package (app.json)');
+      assert.strictEqual(pkgRows.length, 1, 'should be exactly one package row after the fix');
+      assert.strictEqual(pkgRows[0].ok, true);
+      assert.match(pkgRows[0].detail, /^com\.example\./);
+
+      // The old stale row name must not linger (and no duplicate may be appended).
+      assert.ok(
+        !results.some((r) => r.name === 'Android package (applicationId)'),
+        'no stale-named row should remain'
+      );
+
+      const appJson = JSON.parse(fs.readFileSync(path.join(dir, 'app.json'), 'utf8'));
+      assert.match(appJson.expo.android.package, /^com\.example\./);
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
   });
 });
