@@ -76,6 +76,7 @@ async function resolveClean() {
     'prebuild',
     '--platform',
     'android',
+    '--non-interactive',
     ...(shouldClean ? ['--clean'] : []),
   ]);
 
