@@ -195,6 +195,36 @@ describe('UI HTTP Server REST endpoints', () => {
     assert.match((await res.json()).error, /not linked to EAS/i);
   });
 
+  it('POST /api/keystore/auto-setup runs the shared chain (rehydrate path)', async () => {
+    // A real rehydrate candidate (credentials.json + .jks) — the chain must
+    // pick rehydrate without keytool or any EAS network call.
+    const jksDir = path.join(dir, 'credentials', 'android');
+    fs.mkdirSync(jksDir, { recursive: true });
+    fs.writeFileSync(path.join(jksDir, 'release.jks'), 'fake-keystore-bytes');
+    fs.writeFileSync(
+      path.join(dir, 'credentials.json'),
+      JSON.stringify({
+        android: {
+          keystore: {
+            keystorePath: 'credentials/android/release.jks',
+            keystorePassword: 'sp123456',
+            keyAlias: 'release',
+            keyPassword: 'kp123456',
+          },
+        },
+      }, null, 2)
+    );
+
+    const res = await fetch(`${serverInstance.url}/api/keystore/auto-setup`, { method: 'POST' });
+    assert.strictEqual(res.status, 200);
+    const data = await res.json();
+    assert.strictEqual(data.provider, 'rehydrate');
+    assert.strictEqual(data.storeFile, 'release.jks');
+    // Generated passwords are only returned for local generation.
+    assert.strictEqual(data.generatedPassword, undefined);
+    assert.ok(fs.existsSync(path.join(dir, 'keystore.properties')), 'keystore.properties written');
+  });
+
   it('serves GET /api/keystore/status', async () => {
     const res = await fetch(`${serverInstance.url}/api/keystore/status`);
     assert.strictEqual(res.status, 200);
@@ -406,7 +436,7 @@ describe('UI server shutdown and mid-build keystore locks (B4/B10)', () => {
     const start = await startSleepingBuild();
     assert.strictEqual(start.status, 202);
 
-    const guarded = ['/api/keystore/setup', '/api/keystore/upload', '/api/doctor/rehydrate'];
+    const guarded = ['/api/keystore/setup', '/api/keystore/upload', '/api/keystore/auto-setup'];
     for (const p of guarded) {
       const res = await fetch(`${serverInstance.url}${p}`, { method: 'POST' });
       assert.strictEqual(res.status, 409, `${p} should 409 while building`);

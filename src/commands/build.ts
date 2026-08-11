@@ -13,7 +13,7 @@ import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin
 import { maybePromptScriptUpdate } from '../util/maybePromptScriptUpdate';
 import { androidPackageCheck, setAndroidPackage } from './doctor';
 import { readKeystoreProps } from '../core/setupSigning';
-import { ensureKeystore } from '../core/keystore';
+import { autoSetupKeystore } from '../core/keystore/autoSetup';
 import { detectIosProject } from '../core/ios/detect';
 import { readIosCredentials } from '../core/ios/credentials';
 import {
@@ -48,63 +48,116 @@ async function resolveCleanFlag(
 }
 
 /**
- * Fast pre-flight for `build android` (P0-2): checks the two file-based
- * prerequisites that would otherwise fail the pipeline late — the Android
- * package (`expo.android.package`) and the release signing keystore. In an
- * interactive terminal it offers to fix both with a single confirm before the
- * pipeline starts; non-TTY and `--dry-run` leave the existing behavior
- * untouched (the pipeline surfaces the problem with its normal error).
+ * The two file-based prerequisites checked before an Android build: the
+ * package name (`expo.android.package`) and the release signing keystore.
  */
-async function preflightAndroidBuild(
-  cwd: string,
-  opts: { dryRun: boolean; debug: boolean }
-): Promise<void> {
-  if (opts.dryRun || !process.stdin.isTTY) return;
+export interface AndroidPreflightAnalysis {
+  needsPackage: boolean;
+  needsKeystore: boolean;
+  /** Human-readable "missing" list for the confirm prompt, e.g. "the Android
+   * package (expo.android.package) and a release signing keystore". */
+  missing: string;
+}
 
-  // File-based checks only — no env probing (JDK, ANDROID_HOME) here; that is
-  // the job of `doctor`, and builds shouldn't slow down for it.
+/**
+ * Injectable fix implementations for {@link applyAndroidPreflightFixes} —
+ * tests stub the keystore setup without touching the real provider chain.
+ */
+export interface AndroidPreflightFixers {
+  setAndroidPackage?: (cwd: string, packageName: string) => void;
+  /** Defaults to the shared auto-setup chain (rehydrate → EAS fetch → generate). */
+  setupKeystore?: (cwd: string) => Promise<unknown>;
+}
+
+/**
+ * File-only analysis of the prerequisites for an Android build — no env
+ * probing (JDK, ANDROID_HOME) and no TTY required. Reads `app.json` (or the
+ * dynamic config, if present) for the package and `keystore.properties` for
+ * the release keystore. Debug builds skip the keystore check (they use the
+ * debug key).
+ */
+export function analyzeAndroidPreflight(
+  cwd: string,
+  opts: { debug: boolean }
+): AndroidPreflightAnalysis {
   const pkg = androidPackageCheck(cwd);
   const needsPackage = pkg.source === 'app.json' && !pkg.pkg;
   const needsKeystore = !opts.debug && !readKeystoreProps(cwd);
-
-  if (!needsPackage && !needsKeystore) return;
-
   const missing = [
     needsPackage ? 'the Android package (expo.android.package)' : null,
     needsKeystore ? 'a release signing keystore' : null,
   ]
     .filter(Boolean)
     .join(' and ');
+  return { needsPackage, needsKeystore, missing };
+}
 
-  const shouldFix = await confirm({
-    message: `This project is missing ${missing}. Set it up automatically before building?`,
-    default: true,
-  });
-  console.log('');
-  if (!shouldFix) {
-    log.dim('Proceeding without setup — the build may fail. Run `local-expo-build doctor` to inspect.');
-    return;
-  }
+/**
+ * Applies the fixes for the missing prerequisites, logging the outcome. Each
+ * fix is wrapped so one failing fix doesn't stop the other. `fixers` defaults
+ * to the real implementations (doctor's `setAndroidPackage` and the keystore
+ * provider chain); tests inject stubs.
+ */
+export async function applyAndroidPreflightFixes(
+  cwd: string,
+  analysis: Pick<AndroidPreflightAnalysis, 'needsPackage' | 'needsKeystore'>,
+  fixers: AndroidPreflightFixers = {}
+): Promise<void> {
+  const { setAndroidPackage: setPkg = setAndroidPackage, setupKeystore: setupKs = autoSetupKeystore } = fixers;
 
-  if (needsPackage) {
+  if (analysis.needsPackage) {
     const folder = path.basename(cwd).toLowerCase().replace(/[^a-z0-9]/g, '') || 'app';
     const pkgName = `com.example.${folder}`;
     try {
-      setAndroidPackage(cwd, pkgName);
+      setPkg(cwd, pkgName);
       log.ok(`Set expo.android.package = "${pkgName}" in app.json`);
     } catch (err: any) {
       log.error(`Could not set Android package: ${err?.message || err}`);
     }
   }
 
-  if (needsKeystore) {
+  if (analysis.needsKeystore) {
     try {
-      await ensureKeystore(cwd);
+      await setupKs(cwd);
       log.ok('Signing keystore configured.');
     } catch (err: any) {
       log.error(`Keystore setup failed: ${err?.message || err}`);
     }
   }
+}
+
+/**
+ * Fast pre-flight for `build android` (P0-2): checks the two file-based
+ * prerequisites that would otherwise fail the pipeline late — the Android
+ * package (`expo.android.package`) and the release signing keystore. In an
+ * interactive terminal it offers to fix both with a single confirm before the
+ * pipeline starts; non-TTY and `--dry-run` leave the existing behavior
+ * untouched (the pipeline surfaces the problem with its normal error).
+ *
+ * `deps` lets tests drive the confirm prompt and stub the fixes without a TTY.
+ */
+export async function preflightAndroidBuild(
+  cwd: string,
+  opts: { dryRun: boolean; debug: boolean },
+  deps: { confirm?: (message: string) => Promise<boolean>; fixers?: AndroidPreflightFixers } = {}
+): Promise<void> {
+  if (opts.dryRun || !process.stdin.isTTY) return;
+
+  const analysis = analyzeAndroidPreflight(cwd, { debug: opts.debug });
+  if (!analysis.needsPackage && !analysis.needsKeystore) return;
+
+  const ask = deps.confirm || (async (message: string) =>
+    confirm({ message, default: true }));
+  const shouldFix = await ask(
+    `This project is missing ${analysis.missing}. Set it up automatically before building?`
+  );
+  console.log('');
+  if (!shouldFix) {
+    log.dim('Proceeding without setup — the build may fail. Run `local-expo-build doctor` to inspect.');
+    return;
+  }
+
+  await applyAndroidPreflightFixes(cwd, analysis, deps.fixers);
 }
 
 export function registerBuildCommand(program: Command): void {
