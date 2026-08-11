@@ -104,8 +104,18 @@ export async function resolveLatestPublishedVersion(): Promise<string | null> {
   }
 
   const latest = await fetchLatestVersion();
-  if (latest) writeCache(latest);
-  else if (cached) return cached.latest;
+  if (latest) {
+    // Best-effort cache write: a read-only home directory (sandboxed CI, Nix,
+    // read-only mounts) must never break the update check — or any CLI command,
+    // since maybePromptCliUpdate runs in the preAction hook of every command.
+    try {
+      writeCache(latest);
+    } catch {
+      // ignore — the fetched version still wins for this invocation
+    }
+    return latest;
+  }
+  if (cached) return cached.latest;
   return null;
 }
 
