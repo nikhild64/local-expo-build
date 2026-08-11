@@ -68,6 +68,12 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
   const sseClients: Set<ServerResponse> = new Set();
 
   const currentEasAuth = (): EasAuth | null => pastedEasAuth || resolveEasAuth();
+  /** Strip plaintext keystore passwords before sending props to the browser. */
+  const redactKeystoreProps = (props: any): any => {
+    if (!props) return props;
+    const { storePassword, keyPassword, ...safe } = props;
+    return safe;
+  };
   const redactLogLine = (message: string): string =>
     message
       .replace(/(authorization|expo-session|token|password|keyPassword|storePassword)\s*[=:]\s*\S+/gi, '$1=[REDACTED]')
@@ -169,7 +175,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
               buildStatus: activeBuild ? 'building' : 'idle',
               easReady: isEasReady(easLink),
               easLink,
-              keystoreProps: readKeystoreProps(cwd),
+              keystoreProps: redactKeystoreProps(readKeystoreProps(cwd)),
             })
           );
           return;
@@ -338,7 +344,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           res.end(
             JSON.stringify({
               configured: !!props,
-              props,
+              props: redactKeystoreProps(props),
               rehydrateCandidate: candidate
                 ? {
                     storeFile: candidate.storeFile,
