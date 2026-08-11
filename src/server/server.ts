@@ -118,16 +118,12 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
     const { storePassword, keyPassword, ...safe } = props;
     return safe;
   };
-  const redactLogLine = (message: string): string =>
-    message
-      .replace(/(authorization|expo-session|token|password|keyPassword|storePassword)\s*[=:]\s*\S+/gi, '$1=[REDACTED]')
-      .replace(/[A-Za-z0-9+/]{512,}={0,2}/g, '[REDACTED_BASE64]');
   const serverLog = (message: string) => {
     if (terminalLogs) log.info(`[ui] ${redactLogLine(message)}`);
   };
   const withEasOperation = async <T>(operation: () => Promise<T> | T): Promise<T> => {
     if (activeEasOperation) {
-      const err: any = new Error('Another EAS operation is already in progress.');
+      const err: any = new Error('Another operation is already in progress.');
       err.status = 409;
       throw err;
     }
@@ -787,6 +783,22 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
       });
     },
   };
+}
+
+/**
+ * Redacts credential-ish values from a log line for terminal mirroring
+ * (`--logs`). Handles `key=value`, `key: value`, quoted values with spaces
+ * (e.g. `password="my pass"`), and bare space-separated values
+ * (e.g. `storePassword android`) — the old regex only matched `key=:\s\S+`,
+ * which leaked quoted/space-separated values (D12).
+ */
+export function redactLogLine(message: string): string {
+  return message
+    .replace(
+      /(authorization|expo-session|token|keyPassword|storePassword|password)\s*(?:[=:]\s*)?("[^"]*"|'[^']*'|\S+)/gi,
+      '$1=[REDACTED]'
+    )
+    .replace(/[A-Za-z0-9+/]{512,}={0,2}/g, '[REDACTED_BASE64]');
 }
 
 async function parseJsonBody(req: IncomingMessage): Promise<any> {

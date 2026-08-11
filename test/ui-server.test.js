@@ -8,7 +8,7 @@ const assert = require('node:assert');
 const { collectDoctorChecks, setAndroidPackage, runDoctor } = require('../dist/commands/doctor.js');
 const { runAndroidBuild } = require('../dist/core/androidBuild.js');
 const { writeProjectIdToAppJson } = require('../dist/core/eas/link.js');
-const { startUiServer, listenWithRetry } = require('../dist/server/server.js');
+const { startUiServer, listenWithRetry, redactLogLine } = require('../dist/server/server.js');
 
 // Each server instance gets its own random port: undici's global agent pools
 // keep-alive connections per origin, so reusing a fixed port across tests makes
@@ -579,6 +579,42 @@ describe('UI server bind retry (D4)', () => {
     } finally {
       await new Promise((resolve) => occupied.close(resolve));
     }
+  });
+});
+
+describe('redactLogLine (D12)', () => {
+  it('redacts key=value and key: value forms', () => {
+    const out = redactLogLine('-PstorePassword=hunter2');
+    assert.ok(out.includes('storePassword=[REDACTED]'));
+    assert.ok(!out.includes('hunter2'));
+  });
+
+  it('redacts quoted values containing spaces', () => {
+    const out = redactLogLine('password: "my pass 123"');
+    assert.ok(out.includes('password=[REDACTED]'));
+    assert.ok(!out.includes('my pass'), 'quoted value with spaces must be fully redacted');
+  });
+
+  it('redacts bare space-separated values', () => {
+    const out = redactLogLine('storePassword android keyAlias release');
+    assert.ok(out.includes('storePassword=[REDACTED]'), 'space-separated value must be redacted');
+    assert.ok(!out.includes('storePassword android'));
+  });
+
+  it('redacts keyPassword/storePassword specifically', () => {
+    const out = redactLogLine('keyPassword=secret storePassword=also-secret');
+    assert.ok(!out.includes('secret'));
+    assert.ok(!out.includes('also-secret'));
+  });
+
+  it('redacts long base64 blobs', () => {
+    const blob = 'A'.repeat(600);
+    assert.strictEqual(redactLogLine(blob), '[REDACTED_BASE64]');
+  });
+
+  it('leaves ordinary build lines intact', () => {
+    const line = '> Task :app:assembleRelease UP-TO-DATE';
+    assert.strictEqual(redactLogLine(line), line);
   });
 });
 
