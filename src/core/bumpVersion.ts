@@ -28,8 +28,10 @@ export function bumpVersion({
   const gradlePath = path.join(cwd, 'android', 'app', 'build.gradle');
 
   if (!fs.existsSync(appJsonPath)) throw new Error(`app.json not found at ${appJsonPath}`);
-  if (!fs.existsSync(gradlePath))
-    throw new Error(`${gradlePath} not found — run prebuild first.`);
+  const gradleExists = fs.existsSync(gradlePath);
+  if (!gradleExists) {
+    log.dim('android/app/build.gradle not present — bumping app.json only (iOS-only build or prebuild not run).');
+  }
 
   const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
   const currentVersion: string = appJson.expo?.version;
@@ -51,7 +53,7 @@ export function bumpVersion({
   }
 
   let nextCode: number | null = null;
-  let gradle = fs.readFileSync(gradlePath, 'utf8');
+  let gradle = gradleExists ? fs.readFileSync(gradlePath, 'utf8') : '';
   if (!skipEas && appJson.expo?.extra?.eas?.projectId) {
     const easJsonPath = path.join(cwd, 'eas.json');
     let isRemote = false;
@@ -114,15 +116,17 @@ export function bumpVersion({
     }
   }
 
-  if (nextCode == null) {
+  if (nextCode == null && gradleExists) {
     const cur = gradle.match(/\bversionCode\s+(\d+)/);
     nextCode = cur ? parseInt(cur[1], 10) + 1 : 1;
     log.dim(`Local versionCode bump: → ${nextCode}`);
   }
-  gradle = gradle.replace(/(\bversionCode\s+)\d+/, `$1${nextCode}`);
-  gradle = gradle.replace(/(\bversionName\s+")[^"]*"/, `$1${nextVersion}"`);
-  fs.writeFileSync(gradlePath, gradle, 'utf8');
-  log.ok(`build.gradle: versionCode=${nextCode}, versionName="${nextVersion}"`);
+  if (gradleExists) {
+    gradle = gradle.replace(/(\bversionCode\s+)\d+/, `$1${nextCode}`);
+    gradle = gradle.replace(/(\bversionName\s+")[^"]*"/, `$1${nextVersion}"`);
+    fs.writeFileSync(gradlePath, gradle, 'utf8');
+    log.ok(`build.gradle: versionCode=${nextCode}, versionName="${nextVersion}"`);
+  }
 
   return { versionName: nextVersion, versionCode: nextCode };
 }
