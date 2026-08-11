@@ -60,6 +60,12 @@ npx local-expo-build ui
 
 Options: `npx local-expo-build ui [--port 3847] [--no-open] [--logs]`
 
+> **Smart first tab.** The UI opens on the **Doctor** tab when your project
+> isn't ready to build yet (failing checks, missing `expo.android.package`, or
+> no signing keystore) so the one-click fixes are front and center; a healthy
+> project opens straight on the **Build Android** tab. The initial tab choice
+> is never overridden after you pick one.
+
 - **Security Boundary**: Binds strictly to `127.0.0.1` (localhost only).
 - **Chai Visual Theme**: Dark canvas (`#14100c`), warm accent (`#f0824e`), Nunito + JetBrains Mono typography.
 - **Build Tab**: Trigger APK/AAB builds, configure flags (`--clean`, `--no-bump`, `--no-sync`), and view live streaming build logs via SSE.
