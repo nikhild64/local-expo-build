@@ -36,10 +36,20 @@ export function bumpVersion({
   const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
   const currentVersion: string = appJson.expo?.version;
   if (!currentVersion || currentVersion.split('.').length !== 3) {
-    throw new Error(`Unexpected version in app.json: "${currentVersion}"`);
+    throw new Error(
+      `Unexpected version in app.json: "${currentVersion}" — expected x.y.z with integer segments (e.g. 1.2.3). ` +
+        `Pre-release / build-metadata tags (e.g. 1.0.0-rc.1) are not supported by the version bump.`
+    );
   }
   const parts = currentVersion.split('.');
-  parts[2] = String(parseInt(parts[2], 10) + 1);
+  const patch = parseInt(parts[2], 10);
+  if (!Number.isInteger(patch) || String(patch) !== parts[2]) {
+    throw new Error(
+      `Unexpected patch segment "${parts[2]}" in app.json version "${currentVersion}" — ` +
+        `expected a plain integer (no leading zeros, no pre-release tags).`
+    );
+  }
+  parts[2] = String(patch + 1);
   const nextVersion = parts.join('.');
   appJson.expo.version = nextVersion;
   fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2) + '\n', 'utf8');
