@@ -912,7 +912,8 @@ export async function runDoctor({
       try {
         setAndroidPackage(cwd, autoPackage);
         log.ok(`Set android.package to "${autoPackage}" in app.json`);
-        replaceResultByName(results, 'Android package (applicationId)', androidPackageCheck(cwd).result);
+        const fixedPkg = androidPackageCheck(cwd);
+        replaceResultByName(results, fixedPkg.result.name, fixedPkg.result);
       } catch (err: any) {
         log.error(`Could not set Android package: ${err?.message || err}`);
       }
