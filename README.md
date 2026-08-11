@@ -36,6 +36,11 @@ Three ways to use `local-expo-build`:
 - **Scaffold** — `npx local-expo-build init` drops reusable, committable scripts into your project; you run `npm run build:android:aab` from then on.
 - **Runner** — `npx local-expo-build build android --aab`; one command, no files touched in your repo.
 
+> **No command = setup wizard.** Running `local-expo-build` with no subcommand
+> inside an Expo project starts the `init` setup wizard automatically
+> (equivalent to `local-expo-build init`). In any other directory it prints
+> usage hints instead.
+
 ## Install
 
 ```bash
@@ -133,6 +138,10 @@ Useful if you don't want any files committed to your repo and prefer to drive th
 ## Commands
 
 ```text
+local-expo-build                          Bare invocation — runs `init` (the setup
+                                            wizard) inside an Expo project; prints
+                                            usage hints in any other directory.
+
 local-expo-build init [--force] [--no-keystore] [--no-doctor]
                                             Scaffold scripts + package.json entries
                                             (runs `doctor` first by default)
