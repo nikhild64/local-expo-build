@@ -34,6 +34,7 @@ function ensureKeystoreInAndroidApp(cwd, storeFile) {
       if (props && props.storeFile) {
         props.storeFile = altStoreFile;
         writePropsFile(PROPS_PATH, props);
+        syncCredentialsJson(cwd, props);
       }
       return;
     }
@@ -94,6 +95,7 @@ function ensureKeystoreInAndroidApp(cwd, storeFile) {
   if (actualStoreFile !== storeFile && props) {
     props.storeFile = actualStoreFile;
     writePropsFile(PROPS_PATH, props);
+    syncCredentialsJson(cwd, props);
   }
 
   console.log(
@@ -111,6 +113,28 @@ function writePropsFile(p, pObj) {
       `keyPassword=${pObj.keyPassword}`,
     ];
     fs.writeFileSync(p, lines.join('\n') + '\n', 'utf8');
+  } catch (_) {}
+}
+
+// Keeps credentials.json in lock-step with keystore.properties after a
+// storeFile swap (alternate-extension restore), so EAS submit / cloud
+// builds reference the same .jks that Gradle actually signs with.
+function syncCredentialsJson(cwd, pObj) {
+  try {
+    const credPath = path.join(cwd, 'credentials.json');
+    let existing = {};
+    if (fs.existsSync(credPath)) {
+      existing = JSON.parse(fs.readFileSync(credPath, 'utf8')) || {};
+    }
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) existing = {};
+    existing.android = existing.android || {};
+    existing.android.keystore = {
+      keystorePath: 'android/app/' + pObj.storeFile,
+      keystorePassword: pObj.storePassword,
+      keyAlias: pObj.keyAlias,
+      keyPassword: pObj.keyPassword,
+    };
+    fs.writeFileSync(credPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
   } catch (_) {}
 }
 

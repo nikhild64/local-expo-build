@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { log } from '../util/log';
+import { writeCredentialsJson } from './writeCredentialsJson';
 
 export interface SetupSigningOpts {
   cwd: string;
@@ -35,7 +36,9 @@ function ensureKeystoreInAndroidApp(cwd: string, storeFile: string): void {
     if (isNonEmptyFile(altDest)) {
       const props = readKeystoreProps(cwd);
       if (props) {
-        writeKeystoreProps(cwd, { ...props, storeFile: altStoreFile });
+        const updated = { ...props, storeFile: altStoreFile };
+        writeKeystoreProps(cwd, updated);
+        writeCredentialsJson(cwd, updated);
       }
       return;
     }
@@ -100,7 +103,9 @@ function ensureKeystoreInAndroidApp(cwd: string, storeFile: string): void {
   if (actualStoreFile !== storeFile) {
     const props = readKeystoreProps(cwd);
     if (props) {
-      writeKeystoreProps(cwd, { ...props, storeFile: actualStoreFile });
+      const updated = { ...props, storeFile: actualStoreFile };
+      writeKeystoreProps(cwd, updated);
+      writeCredentialsJson(cwd, updated);
     }
   }
 
