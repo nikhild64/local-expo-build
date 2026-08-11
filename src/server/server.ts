@@ -57,10 +57,50 @@ export async function findAvailablePort(startPort: number): Promise<number> {
   throw new Error(`Could not find an available port in range ${startPort}..${startPort + 50}`);
 }
 
+/**
+ * Binds `server` to the preferred port, retrying upward on EADDRINUSE.
+ *
+ * Unlike a probe-then-listen approach, the listen itself carries the retry
+ * logic, so a port that is grabbed between a probe and our listen (TOCTOU) —
+ * or any other concurrent bind — is handled here instead of crashing the
+ * process with an unhandled 'error' event (the pre-fix behavior: the listen
+ * promise never rejected and the EADDRINUSE error took down the CLI).
+ */
+export async function listenWithRetry(
+  server: http.Server,
+  preferredPort: number,
+  maxAttempts = 50
+): Promise<number> {
+  let p = preferredPort;
+  for (let attempt = 0; attempt < maxAttempts; attempt++, p++) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          server.removeListener('listening', onListening);
+          reject(err);
+        };
+        const onListening = () => {
+          server.removeListener('error', onError);
+          resolve();
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen({ host: '127.0.0.1', port: p });
+      });
+      return p;
+    } catch (err: any) {
+      if (err?.code === 'EADDRINUSE') continue;
+      throw err;
+    }
+  }
+  throw new Error(
+    `Could not bind the UI server to any port in range ${preferredPort}..${p - 1}`
+  );
+}
+
 export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstance> {
   const cwd = path.resolve(opts.cwd);
   const preferredPort = opts.port || 3847;
-  const actualPort = await findAvailablePort(preferredPort);
   const dryRun = !!opts.dryRun;
   const terminalLogs = !!opts.logs;
   const quiet = !!opts.quiet;
@@ -635,11 +675,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
     socket.on('close', () => openSockets.delete(socket));
   });
 
-  await new Promise<void>((resolve) => {
-    server.listen({ host: '127.0.0.1', port: actualPort }, () => {
-      resolve();
-    });
-  });
+  const actualPort = await listenWithRetry(server, preferredPort);
 
   const url = `http://127.0.0.1:${actualPort}`;
   if (!quiet) {
