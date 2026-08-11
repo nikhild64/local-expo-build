@@ -9,12 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Smart first tab in the browser UI.** The UI now opens on the **Doctor**
+  tab when the project isn't ready to build (failing checks, missing
+  `expo.android.package`, or no signing keystore) so the one-click fixes are
+  front and center; healthy projects open straight on **Build Android**. The
+  initial tab choice is never overridden after the user picks one.
 - **Bare invocation runs `init`.** `local-expo-build` with no subcommand now
   starts the setup wizard automatically when run inside an Expo project
   (equivalent to `local-expo-build init`); anywhere else it prints usage hints
   instead of a bare help screen. Also fixes `init` crashing in non-interactive
   shells: a failing doctor pre-flight now aborts with a clear message, and the
   keystore prompt is skipped (with a hint) when stdin isn't a TTY.
+
+### Fixed
+
+- **UI doctor env checks always reported "not found".** `which` and
+  `projectBinVersion` passed execa's `signal` option, which execa v9 renamed
+  to `cancelSignal` — every probe threw and was swallowed into a "not found"
+  row, so the browser UI could never verify JDK, keytool, eas-cli, or the
+  in-project Expo CLI. Pass `cancelSignal` so the checks actually run (and
+  still abort cleanly on the 8s timeout).
 - **Direct EAS browser actions.** The local UI can now link an EAS project, create `eas.json`, and fetch Android keystores directly from Expo's GraphQL API. Browser keystore fetch no longer requires the manual `eas credentials` download followed by `keystore import` round-trip.
 - **Multipart `.jks` Uploads.** Direct `.jks` keystore file uploads via busboy multipart parser in the web interface.
 - **Non-interactive Keystore & Build Core APIs.** Extracted `runAndroidBuild`, `collectDoctorChecks`, and param-driven keystore setup functions (`generateKeystore`, `importExistingKeystore`, `rehydrateFromCredentialsJson`).

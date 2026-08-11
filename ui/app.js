@@ -109,6 +109,10 @@
   let currentPercentage = 0;
   let keystoreSubtabUserChosen = false;
   let lastKeystoreStatus = null;
+  // Smart first-tab: decide once (initial load) whether to land on Doctor
+  // instead of Build, and only when the user hasn't picked a tab yet.
+  let tabUserChosen = false;
+  let doctorInitialTabDecided = false;
 
   // ── Build settings persistence (localStorage) ──
   const BUILD_SETTINGS_KEY = 'local-expo-build-build-settings-v1';
@@ -482,6 +486,7 @@
   function setupTabNavigation() {
     tabBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
+        tabUserChosen = true;
         switchTab(btn.getAttribute('data-tab'));
       });
     });
@@ -1182,6 +1187,21 @@
     if (capabilities.canEasConfigure) actionCount++;
     if (capabilities.rehydrateAvailable) actionCount++;
     if (capabilities.canSetupKeystore && !capabilities.rehydrateAvailable) actionCount++;
+
+    // Smart first tab: if the project isn't ready to build (failing checks or
+    // a missing Android package / signing keystore), land on the Doctor tab so
+    // the issues and one-click fixes are in front of the user instead of a
+    // build button that would 409. Runs once on initial load, and never after
+    // the user has picked a tab. EAS link/eas.json/credentials.json stay
+    // optional (builds work without EAS), so they don't force the Doctor tab.
+    if (!doctorInitialTabDecided && !tabUserChosen) {
+      doctorInitialTabDecided = true;
+      const notReady =
+        failed.length > 0 ||
+        capabilities.canFixAndroidPackage ||
+        capabilities.canSetupKeystore;
+      if (notReady) switchTab('doctor');
+    }
 
     if (failed.length > 0) {
       doctorSummaryBanner.className = 'alert danger margin-bottom';

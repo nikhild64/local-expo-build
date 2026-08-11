@@ -57,7 +57,9 @@ async function which(cmd: string, args: string[] = ['-version'], signal?: AbortS
       reject: false,
       timeout: 1_500,
       stdio: ['ignore', 'pipe', 'pipe'],
-      signal,
+      // execa v9 renamed `signal` to `cancelSignal` — the old key throws, which
+      // the catch below would swallow into a misleading "not found" row.
+      cancelSignal: signal,
     });
     if (exitCode !== 0 && !stdout) return null;
     const line = (stdout || stderr || '').split('\n')[0]?.trim();
@@ -83,7 +85,8 @@ async function projectBinVersion(name: string, cwd: string, signal?: AbortSignal
       reject: false,
       timeout: 1_500,
       stdio: ['ignore', 'pipe', 'pipe'],
-      signal,
+      // execa v9 renamed `signal` to `cancelSignal` (see `which` above).
+      cancelSignal: signal,
       ...execaOpts,
     });
     return (stdout || stderr || '').split('\n')[0]?.trim() || name;
