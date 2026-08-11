@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { writeKeystoreProps, KeystoreProps } from '../setupSigning';
+import { ensureGitignoreEntries } from '../../util/gitignore';
 import { log } from '../../util/log';
 
 /**
@@ -121,6 +122,7 @@ export async function rehydrateFromCredentialsJson(
     keyPassword: cand.keyPassword,
   };
   writeKeystoreProps(cwd, props);
+  ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
   log.ok(`keystore.properties written from credentials.json (alias=${props.keyAlias}).`);
 
   if (opts.move && !sourceMatchesDest) {

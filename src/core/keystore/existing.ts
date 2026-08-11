@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { confirm, input, password } from '@inquirer/prompts';
 import { writeKeystoreProps } from '../setupSigning';
 import { writeCredentialsJson } from '../writeCredentialsJson';
+import { ensureGitignoreEntries } from '../../util/gitignore';
 import { log } from '../../util/log';
 
 interface CredentialsMatch {
@@ -184,5 +185,6 @@ export async function importExistingKeystore(
     keyAlias,
     keyPassword,
   });
+  ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
   log.ok('keystore.properties & credentials.json written.');
 }

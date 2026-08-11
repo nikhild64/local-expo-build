@@ -144,7 +144,7 @@ export function scaffoldProject(cwd: string, force = false): ScaffoldResult {
     fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
   }
 
-  ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', 'credentials.json']);
+  ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
 
   return { wroteFiles, skippedFiles, exampleWritten, packageScriptsModified };
 }
