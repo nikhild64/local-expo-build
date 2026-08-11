@@ -1120,11 +1120,14 @@
       }
     );
 
-    // The generated password is shown once — offer a copy button.
+    // The generated password is shown once — offer a copy button. The file
+    // name comes from the server's response (shared auto defaults), never a
+    // hardcoded client-side default.
     if (result.generatedPassword) {
+      const storeFile = result.storeFile || 'release.p12';
       await showModal({
         title: 'Release keystore created',
-        message: 'A new release keystore (release.p12) was generated for this project. The password is shown once — copy it now; you will need it for Play Store uploads and EAS submit.',
+        message: `A new release keystore (${storeFile}) was generated for this project. The password is shown once — copy it now; you will need it for Play Store uploads and EAS submit.`,
         type: 'success',
         confirmText: 'OK',
         copyValue: result.generatedPassword,
@@ -1533,7 +1536,7 @@
           storePassword: document.getElementById('gen-store-pass').value,
           keyPassword: document.getElementById('gen-key-pass').value || document.getElementById('gen-store-pass').value,
           cn: document.getElementById('gen-cn').value.trim() || 'Release Signer',
-          org: document.getElementById('gen-org').value.trim() || 'Unknown',
+          org: document.getElementById('gen-org').value.trim() || 'LocalExpoBuild',
           country: document.getElementById('gen-country').value.trim() || 'US',
         },
       };

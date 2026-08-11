@@ -113,13 +113,16 @@ describe('runFixChain — keystore auto-setup (single endpoint)', () => {
     const { deps, calls } = makeDeps();
     const result = await runFixChain({ needsPackage: false, needsKeystore: true }, deps);
     assert.strictEqual(result.ready, true);
+    // Default fake response has no storeFile/keyAlias — the chain passes null.
+    assert.strictEqual(result.storeFile, null);
+    assert.strictEqual(result.keyAlias, null);
     const apiCalls = calls.filter(([kind]) => kind === 'api');
     assert.strictEqual(apiCalls.length, 1);
     assert.strictEqual(apiCalls[0][1], '/api/keystore/auto-setup');
     assert.deepStrictEqual(apiCalls[0][2], {});
   });
 
-  it('returns the generated password so the caller can show the copy modal', async () => {
+  it('returns the generated password and keystore identity for the copy modal', async () => {
     const { deps } = makeDeps({
       apiOverrides: {
         '/api/keystore/auto-setup': {
@@ -131,6 +134,8 @@ describe('runFixChain — keystore auto-setup (single endpoint)', () => {
     const result = await runFixChain({ needsPackage: false, needsKeystore: true }, deps);
     assert.strictEqual(result.ready, true);
     assert.strictEqual(result.generatedPassword, 'abc123def456');
+    assert.strictEqual(result.storeFile, 'release.p12');
+    assert.strictEqual(result.keyAlias, 'release');
   });
 
   it('reports ready without a password when a non-generate provider wins', async () => {
@@ -145,6 +150,8 @@ describe('runFixChain — keystore auto-setup (single endpoint)', () => {
     const result = await runFixChain({ needsPackage: false, needsKeystore: true }, deps);
     assert.strictEqual(result.ready, true);
     assert.strictEqual(result.generatedPassword, null);
+    assert.strictEqual(result.storeFile, 'release.jks');
+    assert.strictEqual(result.keyAlias, 'release');
   });
 
   it('stops (ready false, alert shown) when auto-setup fails', async () => {
