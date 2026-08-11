@@ -916,7 +916,12 @@ export async function runDoctor({
 
   const fixableCount = (needsPkgFix ? 1 : 0) + (needsEasConfigFix ? 1 : 0) + (needsKeystoreFix ? 1 : 0);
 
-  let runAutoFixAll = fixAll === true;
+  // --fix must never mutate the project under --dry-run (the interactive path
+  // is already gated via `interactive`).
+  let runAutoFixAll = fixAll === true && !dryRun;
+  if (fixAll === true && dryRun) {
+    log.warn('--fix requested but --dry-run is active — no fixes applied. Re-run without --dry-run to fix.');
+  }
   if (!runAutoFixAll && interactive && fixableCount > 0) {
     runAutoFixAll = await confirm({
       message: `Fix all ${fixableCount} identified issue(s) automatically?`,

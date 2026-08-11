@@ -370,3 +370,43 @@ describe('doctor --fix row replacement (A2)', () => {
     }
   });
 });
+
+describe('doctor --fix respects --dry-run (D2)', () => {
+  it('applies no fixes under dry-run', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'leb-doctor-dry-'));
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'dry-app', version: '1.0.0', dependencies: { expo: '52.0.0' } }, null, 2)
+    );
+    // No expo.android.package and no keystore — both would be "fixed" if
+    // --fix ran for real.
+    fs.writeFileSync(
+      path.join(dir, 'app.json'),
+      JSON.stringify({ expo: { name: 'Dry App', slug: 'dry-app', version: '1.0.0' } }, null, 2)
+    );
+
+    try {
+      const { results } = await runDoctor({ cwd: dir, dryRun: true, fixAll: true, skipUpdateCheck: true });
+
+      // app.json untouched — no android.package added
+      const appJson = JSON.parse(fs.readFileSync(path.join(dir, 'app.json'), 'utf8'));
+      assert.strictEqual(
+        appJson.expo.android,
+        undefined,
+        'dry-run must not write expo.android.package'
+      );
+
+      // No keystore generated / written
+      assert.ok(!fs.existsSync(path.join(dir, 'keystore.properties')), 'dry-run must not write keystore.properties');
+      assert.ok(!fs.existsSync(path.join(dir, 'credentials.json')), 'dry-run must not write credentials.json');
+
+      // The check rows are still reported honestly
+      assert.ok(
+        results.some((r) => r.name === 'Android package (app.json)' && !r.ok),
+        'the missing-package row should still be reported as failing'
+      );
+    } finally {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+});
