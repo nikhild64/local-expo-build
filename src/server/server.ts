@@ -356,7 +356,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
             res.end(JSON.stringify({ error: 'Cannot rehydrate the keystore while a build is running.' }));
             return;
           }
-          await rehydrateKeystore(cwd);
+          await withEasOperation(() => rehydrateKeystore(cwd));
           broadcastSse('keystore-updated', {});
           res.writeHead(200);
           res.end(JSON.stringify({ success: true }));
@@ -415,17 +415,22 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           const body = await parseJsonBody(req);
           const provider = body.provider;
 
-          if (provider === 'generate') {
-            await generateKeystore(cwd, body.params || {});
-          } else if (provider === 'import') {
-            await importExistingKeystore(cwd, body.params || {});
-          } else if (provider === 'rehydrate') {
-            await rehydrateFromCredentialsJson(cwd, body.params || {});
-          } else {
+          if (provider !== 'generate' && provider !== 'import' && provider !== 'rehydrate') {
             res.writeHead(400);
             res.end(JSON.stringify({ error: `Unsupported provider "${provider}"` }));
             return;
           }
+          // Keystore mutations share the operation mutex with the EAS routes so
+          // concurrent writes can't race on keystore.properties/credentials.json (D9).
+          await withEasOperation(async () => {
+            if (provider === 'generate') {
+              await generateKeystore(cwd, body.params || {});
+            } else if (provider === 'import') {
+              await importExistingKeystore(cwd, body.params || {});
+            } else {
+              await rehydrateFromCredentialsJson(cwd, body.params || {});
+            }
+          });
 
           broadcastSse('keystore-updated', {});
           res.writeHead(200);
@@ -439,123 +444,152 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
             res.end(JSON.stringify({ error: 'Cannot replace the keystore while a build is running.' }));
             return;
           }
-          const bb = Busboy({ headers: req.headers, limits: { fileSize: 5 * 1024 * 1024 } });
-          let tmpPath = '';
-          let originalFilename = '';
-          let keyAlias = '';
-          let storePassword = '';
-          let keyPassword = '';
-          let uploadError: string | null = null;
-          let wsStream: fs.WriteStream | null = null;
+          // Keystore mutations share the operation mutex with the EAS routes so
+          // two concurrent uploads can't race on keystore.properties/
+          // credentials.json (D9). The busboy flow is event-driven, so the mutex
+          // is held until the upload settles: busboy error, premature client
+          // close, or the finish handler completing.
+          await withEasOperation(
+            () =>
+              new Promise<void>((resolve) => {
+                let settled = false;
+                const done = () => {
+                  if (settled) return;
+                  settled = true;
+                  resolve();
+                };
 
-          bb.on('file', (fieldname, file, info) => {
-            const { filename } = info;
-            originalFilename = path.basename(filename);
-            const ext = path.extname(filename).toLowerCase();
-            if (ext !== '.jks' && ext !== '.keystore' && ext !== '.p12') {
-              uploadError = 'Invalid file extension. Only .jks, .keystore, and .p12 files are accepted.';
-              file.resume();
-              return;
-            }
-            tmpPath = path.join(os.tmpdir(), `upload-${Date.now()}-${path.basename(filename)}`);
-            wsStream = fs.createWriteStream(tmpPath);
-            wsStream.on('error', (err) => {
-              uploadError = err?.message || String(err);
-            });
-            file.pipe(wsStream);
-          });
+                const bb = Busboy({ headers: req.headers, limits: { fileSize: 5 * 1024 * 1024 } });
+                let tmpPath = '';
+                let originalFilename = '';
+                let storeFile = '';
+                let keyAlias = '';
+                let storePassword = '';
+                let keyPassword = '';
+                let uploadError: string | null = null;
+                let wsStream: fs.WriteStream | null = null;
 
-          bb.on('field', (name, val) => {
-            if (name === 'keyAlias') keyAlias = val;
-            if (name === 'storePassword') storePassword = val;
-            if (name === 'keyPassword') keyPassword = val;
-          });
+                bb.on('file', (fieldname, file, info) => {
+                  const { filename } = info;
+                  originalFilename = path.basename(filename);
+                  const ext = path.extname(originalFilename).toLowerCase();
+                  if (ext !== '.jks' && ext !== '.keystore' && ext !== '.p12') {
+                    uploadError = 'Invalid file extension. Only .jks, .keystore, and .p12 files are accepted.';
+                    file.resume();
+                    return;
+                  }
+                  // The registered name becomes storeFile, which is later embedded in
+                  // build.gradle as file('...') — a quote/space in the name would break
+                  // the injected signing config, so restrict it to a safe charset (D8).
+                  storeFile = originalFilename.replace(/[^A-Za-z0-9._-]/g, '_') || 'keystore';
+                  tmpPath = path.join(os.tmpdir(), `upload-${Date.now()}-${originalFilename}`);
+                  wsStream = fs.createWriteStream(tmpPath);
+                  wsStream.on('error', (err) => {
+                    uploadError = err?.message || String(err);
+                  });
+                  file.pipe(wsStream);
+                });
 
-          bb.on('error', (err: any) => {
-            if (tmpPath && fs.existsSync(tmpPath)) {
-              try { fs.unlinkSync(tmpPath); } catch {}
-            }
-            uploadError = err?.message || String(err);
-            // A busboy error (e.g. file over the size limit) aborts the request
-            // stream, so 'finish' may never fire — respond here instead of
-            // leaving the client hanging.
-            if (!res.headersSent) {
-              res.writeHead(400);
-              res.end(JSON.stringify({ error: uploadError }));
-            }
-          });
+                bb.on('field', (name, val) => {
+                  if (name === 'keyAlias') keyAlias = val;
+                  if (name === 'storePassword') storePassword = val;
+                  if (name === 'keyPassword') keyPassword = val;
+                });
+
+                bb.on('error', (err: any) => {
+                  if (tmpPath && fs.existsSync(tmpPath)) {
+                    try { fs.unlinkSync(tmpPath); } catch {}
+                  }
+                  uploadError = err?.message || String(err);
+                  // A busboy error (e.g. file over the size limit) aborts the request
+                  // stream, so 'finish' may never fire — respond here instead of
+                  // leaving the client hanging.
+                  if (!res.headersSent) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: uploadError }));
+                  }
+                  done();
+                });
 
           // If the client disconnects mid-upload, busboy may never emit
           // 'finish' or 'error', leaving the temp file in os.tmpdir() forever.
           // On a normal upload req.complete is true and the finish handler
           // owns tmpPath (it unlinks it after the import), so only clean up
           // when the request was terminated prematurely.
-          req.on('close', () => {
-            if (req.complete) return;
-            const cleanup = () => {
-              if (tmpPath) {
-                try { fs.unlinkSync(tmpPath); } catch {}
-              }
-            };
-            if (wsStream && !wsStream.closed) {
-              wsStream.destroy();
-              wsStream.once('close', cleanup);
-            } else {
-              cleanup();
-            }
-          });
+                req.on('close', () => {
+                  if (req.complete) return;
+                  const cleanup = () => {
+                    if (tmpPath) {
+                      try { fs.unlinkSync(tmpPath); } catch {}
+                    }
+                  };
+                  if (wsStream && !wsStream.closed) {
+                    wsStream.destroy();
+                    wsStream.once('close', cleanup);
+                  } else {
+                    cleanup();
+                  }
+                  done();
+                });
 
-          bb.on('finish', async () => {
-            if (res.headersSent) return;
-            // busboy's 'finish' can fire while the piped file stream is still
-            // buffered to disk; wait for it to close before checking the file.
-            if (wsStream) {
-              const ws = wsStream;
-              await new Promise<void>((resolve) => {
-                if (ws.closed) return resolve();
-                ws.once('close', () => resolve());
-                ws.once('error', () => resolve());
-              });
-            }
-            if (uploadError) {
-              if (tmpPath && fs.existsSync(tmpPath)) {
-                try { fs.unlinkSync(tmpPath); } catch {}
-              }
-              res.writeHead(400);
-              res.end(JSON.stringify({ error: uploadError }));
-              return;
-            }
-            if (!tmpPath || !fs.existsSync(tmpPath)) {
-              res.writeHead(400);
-              res.end(JSON.stringify({ error: 'No .jks file uploaded' }));
-              return;
-            }
+                bb.on('finish', async () => {
+                  try {
+                    if (res.headersSent) return;
+                    // busboy's 'finish' can fire while the piped file stream is still
+                    // buffered to disk; wait for it to close before checking the file.
+                    if (wsStream) {
+                      const ws = wsStream;
+                      await new Promise<void>((resolve) => {
+                        if (ws.closed) return resolve();
+                        ws.once('close', () => resolve());
+                        ws.once('error', () => resolve());
+                      });
+                    }
+                    if (uploadError) {
+                      if (tmpPath && fs.existsSync(tmpPath)) {
+                        try { fs.unlinkSync(tmpPath); } catch {}
+                      }
+                      res.writeHead(400);
+                      res.end(JSON.stringify({ error: uploadError }));
+                      return;
+                    }
+                    if (!tmpPath || !fs.existsSync(tmpPath)) {
+                      res.writeHead(400);
+                      res.end(JSON.stringify({ error: 'No .jks file uploaded' }));
+                      return;
+                    }
 
-            try {
-              await importExistingKeystore(cwd, {
-                srcPath: tmpPath,
-                // Register under the original filename (not the temp upload
-                // path) so keystore.properties and credentials.json keep a
-                // stable, recognizable storeFile across re-uploads.
-                storeFile: originalFilename,
-                keyAlias: keyAlias || undefined,
-                storePassword: storePassword || undefined,
-                keyPassword: keyPassword || undefined,
-              });
-              if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-              broadcastSse('keystore-updated', {});
-              res.writeHead(200);
-              res.end(JSON.stringify({ success: true }));
-            } catch (err: any) {
-              if (fs.existsSync(tmpPath)) {
-                try { fs.unlinkSync(tmpPath); } catch {}
-              }
-              res.writeHead(500);
-              res.end(JSON.stringify({ error: err?.message || String(err) }));
-            }
-          });
+                    try {
+                      await importExistingKeystore(cwd, {
+                        srcPath: tmpPath,
+                        // Register under a stable, sanitized name derived from the
+                        // original filename (not the temp upload path), so
+                        // keystore.properties and credentials.json keep a recognizable
+                        // storeFile across re-uploads and never break Gradle injection.
+                        storeFile,
+                        keyAlias: keyAlias || undefined,
+                        storePassword: storePassword || undefined,
+                        keyPassword: keyPassword || undefined,
+                      });
+                      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+                      broadcastSse('keystore-updated', {});
+                      res.writeHead(200);
+                      res.end(JSON.stringify({ success: true }));
+                    } catch (err: any) {
+                      if (fs.existsSync(tmpPath)) {
+                        try { fs.unlinkSync(tmpPath); } catch {}
+                      }
+                      res.writeHead(500);
+                      res.end(JSON.stringify({ error: err?.message || String(err) }));
+                    }
+                  } finally {
+                    done();
+                  }
+                });
 
-          req.pipe(bb);
+                req.pipe(bb);
+              })
+          );
           return;
         }
 

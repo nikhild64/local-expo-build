@@ -270,6 +270,57 @@ describe('UI HTTP Server REST endpoints', () => {
   });
 });
 
+describe('keystore upload filename sanitization (D8)', () => {
+  let dir;
+  let serverInstance;
+
+  beforeEach(async () => {
+    dir = tmpProject();
+    serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false, quiet: true });
+  });
+
+  afterEach(async () => {
+    if (serverInstance) await serverInstance.close();
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  });
+
+  it('sanitizes hostile filenames so storeFile can never break Gradle injection', async () => {
+    const boundary = '----regression-test-boundary';
+    const body = Buffer.from(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="jks"; filename="my key's (2).jks"\r\n` +
+        'Content-Type: application/octet-stream\r\n\r\n' +
+        'fake-p12-content\r\n' +
+        `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="keyAlias"\r\n\r\n' +
+        'release\r\n' +
+        `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="storePassword"\r\n\r\n' +
+        'sp123\r\n' +
+        `--${boundary}--\r\n`,
+      'utf8'
+    );
+
+    const res = await fetch(`${serverInstance.url}/api/keystore/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body,
+    });
+    assert.strictEqual(res.status, 200, await res.text());
+
+    // The quote/space/paren chars are replaced with underscores; nothing
+    // that could break file('...') survives.
+    const props = fs.readFileSync(path.join(dir, 'keystore.properties'), 'utf8');
+    const storeFileLine = props.split('\n').find((l) => l.startsWith('storeFile='));
+    assert.strictEqual(storeFileLine, 'storeFile=my_key_s__2_.jks');
+    assert.match(storeFileLine, /^storeFile=[A-Za-z0-9._-]+$/, 'storeFile must be restricted to a safe charset');
+    assert.ok(
+      fs.existsSync(path.join(dir, 'android', 'app', 'my_key_s__2_.jks')),
+      'keystore copied under the sanitized name'
+    );
+  });
+});
+
 describe('keystore upload temp cleanup on abort (D5)', () => {
   it('removes the temp upload file when the client disconnects mid-upload', async () => {
     const dir = tmpProject();
@@ -376,6 +427,52 @@ describe('UI server shutdown and mid-build keystore locks (B4/B10)', () => {
     // Closing while the build is active must abort it and resolve cleanly.
     await serverInstance.close();
     serverInstance = null;
+  });
+});
+
+describe('keystore mutation mutex (D9)', () => {
+  it('rejects a second keystore mutation while another is in flight, then releases', async () => {
+    const dir = tmpProject();
+    const serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false, quiet: true });
+    try {
+      // A multipart upload whose body never arrives holds the operation mutex
+      // for as long as we keep the socket open.
+      const req = http.request(`${serverInstance.url}/api/keystore/upload`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'multipart/form-data; boundary=----hold',
+          'Content-Length': 1024 * 1024 * 1024,
+          Connection: 'close',
+        },
+      });
+      req.on('error', () => {});
+      req.end();
+
+      // Give the server time to enter the upload route and acquire the mutex.
+      await new Promise((r) => setTimeout(r, 200));
+
+      const blocked = await fetch(`${serverInstance.url}/api/keystore/setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'import', params: {} }),
+      });
+      assert.strictEqual(blocked.status, 409, 'second mutation should 409 while the first holds the mutex');
+
+      // Close the stuck upload → the mutex must be released.
+      req.destroy();
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Now the same setup call runs (and fails with its own error, not 409).
+      const after = await fetch(`${serverInstance.url}/api/keystore/setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'import', params: {} }),
+      });
+      assert.notStrictEqual(after.status, 409, 'mutex should be released after the upload settles');
+    } finally {
+      await serverInstance.close();
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
   });
 });
 
