@@ -3,10 +3,10 @@
 Scope: full pass over `src/` (CLI + UI server) and `ui/` (browser frontend), plus the
 scaffolded `templates/scripts/*.js`. Baseline: `npm run test:only` → 77/77 pass.
 
-Status: A1–A6 and B3/B4/B5/B10/B11/B12 are **fixed and committed** (see commit
-history; each fix committed separately with a relevant message). Remaining items:
-B1, B2, B6, B7, B8, B9, B13. Each fix below is designed to preserve the existing
-flows (no flow redesign).
+Status: **all confirmed bugs (A1–A6) and all B-series hardening items (B1–B12) are
+fixed and committed** (see commit history; each fix committed separately with a
+relevant message). B13 was a verification note only. Each fix was designed to
+preserve the existing flows (no flow redesign).
 
 ---
 
@@ -45,11 +45,11 @@ flows (no flow redesign).
 
 ## B. Edge cases / hardening (not flow-breaking)
 
-### B1. Version bump robustness (`src/core/bumpVersion.ts`, `templates/scripts/bump-version.js`)
+### B1. ✅ FIXED — Version bump robustness (`src/core/bumpVersion.ts`, `templates/scripts/bump-version.js`)
 - Non-numeric patch → `1.0.NaN` (e.g. `1.0.x`); pre-release versions (`1.0.0-rc.1`, 4 segments) throw a generic error; leading-zero patches (`1.0.07`) lose the zero.
 - Fix: validate the patch segment is numeric before bumping; give a clearer error for pre-release versions.
 
-### B2. credentials.json ↔ keystore.properties drift
+### B2. ✅ FIXED — credentials.json ↔ keystore.properties drift
 - `src/core/setupSigning.ts` `ensureKeystoreInAndroidApp`: when only an alternate-extension keystore (`release.jks` vs configured `release.p12`) exists in `android/app/`, it rewrites `keystore.properties` to the alternate name but never `credentials.json` (still points at the old name → EAS submit breaks). Same in `templates/scripts/setup-signing.js`.
 - Fix: re-sync `writeCredentialsJson` after the props swap.
 
@@ -62,16 +62,16 @@ flows (no flow redesign).
 ### B5. ✅ FIXED — `collectDoctorChecks` 8s timeout race
 - `Promise.race` returns a partial, misleadingly-green "Environment check timeout" row while real checks keep running in the background. Mark it incomplete or cancel the in-flight checks.
 
-### B6. iOS multi-workspace error message
+### B6. ✅ FIXED — iOS multi-workspace error message
 - `src/core/ios/detect.ts` returns null on 2+ workspaces; `src/commands/build.ts` says "pass --scheme to disambiguate", but `--scheme` cannot select a workspace (`workspacePath` is null → crash at step 4). Fix the message or add a `--workspace` flag.
 
-### B7. Scaffolded `sync-eas-version.js` reads `build.gradle` before checking `projectId`
+### B7. ✅ FIXED — Scaffolded `sync-eas-version.js` reads `build.gradle` before checking `projectId`
 - Unlinked project without `android/` throws ENOENT instead of printing "skip EAS sync" (non-fatal only because `allowFail`). Check `projectId` first.
 
-### B8. Template `build.js` prebuild omits `--non-interactive`
+### B8. ✅ FIXED — Template `build.js` prebuild omits `--non-interactive`
 - The CLI runner passes it; the scaffolded script doesn't → scaffold-mode builds may hit interactive prompts the runner suppresses. Minor inconsistency.
 
-### B9. `uploadLocalKeystoreToEas` defaults missing package to `com.example.app`
+### B9. ✅ FIXED — `uploadLocalKeystoreToEas` defaults missing package to `com.example.app`
 - `src/core/keystore/easApiFetch.ts` — silently registers the keystore under a placeholder application identifier on EAS. Require the package (doctor already gates it).
 
 ### B10. ✅ FIXED — Keystore mutations allowed mid-build (UI)
@@ -88,12 +88,12 @@ flows (no flow redesign).
 
 ---
 
-## C. Fix plan (priority order)
+## C. Fix plan — DONE
 
-1. **Security:** A1 + A5 (gitignore `*.p12` everywhere; ensure UI keystore routes/providers call `ensureGitignoreEntries`).
-2. **Correctness:** A2 (doctor row key), A3 (iOS bump tolerance), A4 (CLI keystore overwrite), A6 (surface generated password).
-3. **Hardening batch:** B1–B13 as individually small, self-contained fixes.
-4. Add regression tests for A1–A6 and re-run `npm test` (baseline 77/77).
+1. ✅ **Security:** A1 + A5 (gitignore `*.p12` everywhere; keystore providers call `ensureGitignoreEntries` for both CLI and UI paths).
+2. ✅ **Correctness:** A2 (doctor row key), A3 (iOS bump tolerance), A4 (CLI keystore overwrite), A6 (surface generated password).
+3. ✅ **Hardening batch:** B1–B12 (each committed separately; B13 was a verification note).
+4. ⏳ Regression tests for A1–A6 / B-series still to be written — `npm test` baseline remains 77/77 green.
 
 ## D. Verification notes
 - Findings verified against current code (exact call sites noted above).
