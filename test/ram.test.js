@@ -30,6 +30,22 @@ describe('parseRamMb utility', () => {
     assert.strictEqual(parseRamMb('invalid'), null);
     assert.strictEqual(parseRamMb('abc'), null);
   });
+
+  it('throws on zero so it is never silently ignored (D7)', () => {
+    assert.throws(() => parseRamMb('0'), /positive amount/);
+    assert.throws(() => parseRamMb('0g'), /positive amount/);
+    assert.throws(() => parseRamMb('0m'), /positive amount/);
+  });
+
+  it('throws on values above the 64g cap instead of passing them to Gradle (D7)', () => {
+    assert.throws(() => parseRamMb('65g'), /max supported is 64g/);
+    assert.throws(() => parseRamMb('65537m'), /max supported is 64g/);
+  });
+
+  it('accepts the cap boundary exactly', () => {
+    assert.strictEqual(parseRamMb('64g'), 65536);
+    assert.strictEqual(parseRamMb('65536m'), 65536);
+  });
 });
 
 describe('RAM env appending (D6)', () => {
