@@ -524,6 +524,25 @@ describe('doctor --fix row replacement (A2)', () => {
   });
 });
 
+describe('static file serving (D10)', () => {
+  it('serves index.html for missing paths instead of crashing', async () => {
+    const dir = tmpProject();
+    const serverInstance = await startUiServer({ cwd: dir, port: await randomPort(), openBrowser: false, quiet: true });
+    try {
+      // The read-error handler itself (file vanishing between existsSync and
+      // open) can't be triggered deterministically; this exercises the static
+      // path end-to-end and the SPA fallback.
+      const res = await fetch(`${serverInstance.url}/does-not-exist-xyz.js`);
+      assert.strictEqual(res.status, 200);
+      const text = await res.text();
+      assert.match(text, /<html/i, 'missing paths should fall back to index.html');
+    } finally {
+      await serverInstance.close();
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+});
+
 describe('UI server bind retry (D4)', () => {
   it('binds to the next free port when the preferred port is taken', async () => {
     const occupied = net.createServer();
