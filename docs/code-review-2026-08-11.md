@@ -9,8 +9,9 @@ relevant message). B13 was a verification note only. Each fix was designed to
 preserve the existing flows (no flow redesign).
 
 Round 2 (below, section D) covers the remaining un-reviewed areas
-(`src/commands/ui.ts`, `src/server/*`, `src/util/*`) — findings D1–D12 are **filed but
-NOT yet fixed** (D1–D3 confirmed, D4–D6 hardening, D7–D12 minor).
+(`src/commands/ui.ts`, `src/server/*`, `src/util/*`) — findings D1–D12 are **filed**.
+D1–D3 (confirmed bugs) are **fixed and committed** with regression tests; D4–D6
+(hardening) and D7–D12 (minor) are still open.
 
 ---
 
@@ -94,7 +95,7 @@ NOT yet fixed** (D1–D3 confirmed, D4–D6 hardening, D7–D12 minor).
 
 ## D. Round 2 — remaining areas (`src/commands/ui.ts`, `src/server/*`, `src/util/*`)
 
-### D1. ⚠️ CONFIRMED — `keystore` subcommands ignore `--dry-run` and perform real writes
+### D1. ✅ FIXED — `keystore` subcommands ignore `--dry-run` and perform real writes
 - `src/commands/keystore.ts` — all five subcommands destructure only `{ cwd }` from
   `getCtx(cmd)`; `dryRun` is discarded. `local-expo-build --dry-run keystore
   create|import|fetch|rehydrate|setup` runs keytool, copies files, and writes
@@ -105,7 +106,7 @@ NOT yet fixed** (D1–D3 confirmed, D4–D6 hardening, D7–D12 minor).
 - **Fix:** at the command layer, when `ctx.dryRun` log the actions that would run and
   return (or pass `dryRun` down to the providers). Keeps the interactive flow intact.
 
-### D2. ⚠️ CONFIRMED — `doctor --fix --dry-run` executes destructive fixes
+### D2. ✅ FIXED — `doctor --fix --dry-run` executes destructive fixes
 - `src/commands/doctor.ts` — `runAutoFixAll = fixAll === true` is **not** gated on
   `dryRun`, so `doctor --fix --dry-run` writes `expo.android.package` into app.json
   and auto-generates a keystore. The interactive path is correctly gated
@@ -114,7 +115,7 @@ NOT yet fixed** (D1–D3 confirmed, D4–D6 hardening, D7–D12 minor).
 - **Fix:** `runAutoFixAll = fixAll === true && !dryRun` (print a dry-run notice when
   `--fix --dry-run`).
 
-### D3. ⚠️ CONFIRMED — Unwritable npm-registry cache dir crashes every CLI command
+### D3. ✅ FIXED — Unwritable npm-registry cache dir crashes every CLI command
 - `src/util/checkCliUpdate.ts` — `resolveLatestPublishedVersion()` calls `writeCache()`
   (`fs.mkdirSync` + `fs.writeFileSync` under `os.homedir()/.cache/…`) with no
   try/catch. `maybePromptCliUpdate` is awaited unguarded in the `cli.ts` preAction
