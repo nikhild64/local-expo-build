@@ -485,6 +485,26 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
             }
           });
 
+          // If the client disconnects mid-upload, busboy may never emit
+          // 'finish' or 'error', leaving the temp file in os.tmpdir() forever.
+          // On a normal upload req.complete is true and the finish handler
+          // owns tmpPath (it unlinks it after the import), so only clean up
+          // when the request was terminated prematurely.
+          req.on('close', () => {
+            if (req.complete) return;
+            const cleanup = () => {
+              if (tmpPath) {
+                try { fs.unlinkSync(tmpPath); } catch {}
+              }
+            };
+            if (wsStream && !wsStream.closed) {
+              wsStream.destroy();
+              wsStream.once('close', cleanup);
+            } else {
+              cleanup();
+            }
+          });
+
           bb.on('finish', async () => {
             if (res.headersSent) return;
             // busboy's 'finish' can fire while the piped file stream is still
