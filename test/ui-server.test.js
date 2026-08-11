@@ -8,7 +8,7 @@ const assert = require('node:assert');
 const { collectDoctorChecks, setAndroidPackage, runDoctor } = require('../dist/commands/doctor.js');
 const { runAndroidBuild } = require('../dist/core/androidBuild.js');
 const { writeProjectIdToAppJson } = require('../dist/core/eas/link.js');
-const { startUiServer } = require('../dist/server/server.js');
+const { startUiServer, listenWithRetry } = require('../dist/server/server.js');
 
 // Each server instance gets its own random port: undici's global agent pools
 // keep-alive connections per origin, so reusing a fixed port across tests makes
@@ -370,6 +370,45 @@ describe('doctor --fix row replacement (A2)', () => {
       assert.match(appJson.expo.android.package, /^com\.example\./);
     } finally {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+});
+
+describe('UI server bind retry (D4)', () => {
+  it('binds to the next free port when the preferred port is taken', async () => {
+    const occupied = net.createServer();
+    await new Promise((resolve) => occupied.listen(0, '127.0.0.1', resolve));
+    const takenPort = occupied.address().port;
+
+    const dir = tmpProject();
+    let instance;
+    try {
+      instance = await startUiServer({ cwd: dir, port: takenPort, openBrowser: false, quiet: true });
+      assert.ok(instance.port > takenPort, `expected a port above ${takenPort}, got ${instance.port}`);
+
+      // The server is fully functional on the retried port.
+      const res = await fetch(`${instance.url}/api/status`);
+      assert.strictEqual(res.status, 200);
+    } finally {
+      if (instance) await instance.close();
+      await new Promise((resolve) => occupied.close(resolve));
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  it('listenWithRetry rejects cleanly when the port range is exhausted', async () => {
+    const occupied = net.createServer();
+    await new Promise((resolve) => occupied.listen(0, '127.0.0.1', resolve));
+    const takenPort = occupied.address().port;
+    const server = http.createServer();
+    try {
+      // maxAttempts=1 means only `takenPort` is tried → EADDRINUSE → throw.
+      await assert.rejects(
+        () => listenWithRetry(server, takenPort, 1),
+        /Could not bind the UI server/
+      );
+    } finally {
+      await new Promise((resolve) => occupied.close(resolve));
     }
   });
 });
