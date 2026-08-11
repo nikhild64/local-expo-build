@@ -28,6 +28,9 @@ export interface UiServerOpts {
   dryRun?: boolean;
   openBrowser?: boolean;
   logs?: boolean;
+  /** Suppress the startup banner (used by tests: console output interleaving
+   *  with node:test's stdout protocol on Windows corrupts the runner stream). */
+  quiet?: boolean;
 }
 
 export interface UiServerInstance {
@@ -60,6 +63,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
   const actualPort = await findAvailablePort(preferredPort);
   const dryRun = !!opts.dryRun;
   const terminalLogs = !!opts.logs;
+  const quiet = !!opts.quiet;
 
   let activeBuild: { status: 'building'; startedAt: string } | null = null;
   let buildAbort: AbortController | null = null;
@@ -638,7 +642,9 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
   });
 
   const url = `http://127.0.0.1:${actualPort}`;
-  log.ok(`Local Build UI running at ${url}`);
+  if (!quiet) {
+    log.ok(`Local Build UI running at ${url}`);
+  }
 
   return {
     server,
