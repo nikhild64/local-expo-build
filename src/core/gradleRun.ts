@@ -3,7 +3,7 @@ import path from 'path';
 import readline from 'readline';
 import { execa } from 'execa';
 import { log } from '../util/log';
-import { parseRamMb } from '../util/ram';
+import { gradleOptsWithRam, nodeOptionsWithRam, parseRamMb } from '../util/ram';
 
 export interface GradleRunOpts {
   cwd: string;
@@ -24,9 +24,10 @@ export async function gradleRun({ cwd, task, maxRam, onLine, signal }: GradleRun
   const ramMb = parseRamMb(maxRam);
   const env: Record<string, string | undefined> = { ...process.env };
   if (ramMb) {
-    const metaspace = ramMb >= 8192 ? '1536m' : '1024m';
-    env.GRADLE_OPTS = `-Xmx${ramMb}m -XX:MaxMetaspaceSize=${metaspace} -XX:+UseParallelGC`;
-    env.NODE_OPTIONS = `--max-old-space-size=${ramMb}`;
+    // Append to any pre-existing GRADLE_OPTS/NODE_OPTIONS instead of
+    // clobbering them (D6).
+    env.GRADLE_OPTS = gradleOptsWithRam(ramMb, env.GRADLE_OPTS);
+    env.NODE_OPTIONS = nodeOptionsWithRam(ramMb, env.NODE_OPTIONS);
     log.info(`[RAM] Gradle JVM allocated -Xmx${ramMb}m | Node heap: ${ramMb}MB`);
   }
 

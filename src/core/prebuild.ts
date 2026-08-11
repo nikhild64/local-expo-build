@@ -3,7 +3,7 @@ import path from 'path';
 import readline from 'readline';
 import { execa } from 'execa';
 import { log } from '../util/log';
-import { parseRamMb } from '../util/ram';
+import { nodeOptionsWithRam, parseRamMb } from '../util/ram';
 import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
 
 export interface PrebuildOpts {
@@ -42,7 +42,8 @@ export async function prebuild({ cwd, clean = false, maxRam, onLine, signal }: P
   const ramMb = parseRamMb(maxRam);
   const env: Record<string, string | undefined> = { ...process.env };
   if (ramMb) {
-    env.NODE_OPTIONS = `--max-old-space-size=${ramMb}`;
+    // Append to any pre-existing NODE_OPTIONS instead of clobbering it (D6).
+    env.NODE_OPTIONS = nodeOptionsWithRam(ramMb, env.NODE_OPTIONS);
   }
 
   if (onLine) {

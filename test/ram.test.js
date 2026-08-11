@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const { parseRamMb } = require('../dist/util/ram.js');
+const { gradleOptsWithRam, nodeOptionsWithRam, parseRamMb } = require('../dist/util/ram.js');
 
 describe('parseRamMb utility', () => {
   it('returns null for default or empty values', () => {
@@ -29,5 +29,31 @@ describe('parseRamMb utility', () => {
   it('returns null for invalid inputs', () => {
     assert.strictEqual(parseRamMb('invalid'), null);
     assert.strictEqual(parseRamMb('abc'), null);
+  });
+});
+
+describe('RAM env appending (D6)', () => {
+  it('nodeOptionsWithRam appends to an existing value instead of clobbering it', () => {
+    const out = nodeOptionsWithRam(4096, '--openssl-legacy-provider');
+    assert.strictEqual(out, '--openssl-legacy-provider --max-old-space-size=4096');
+    assert.ok(out.includes('--openssl-legacy-provider'), 'existing flag must survive');
+    assert.ok(out.includes('--max-old-space-size=4096'), 'heap flag must be appended');
+  });
+
+  it('nodeOptionsWithRam handles an empty existing value', () => {
+    assert.strictEqual(nodeOptionsWithRam(2048, undefined), '--max-old-space-size=2048');
+    assert.strictEqual(nodeOptionsWithRam(2048, ''), '--max-old-space-size=2048');
+  });
+
+  it('gradleOptsWithRam appends the JVM flags to an existing value', () => {
+    const out = gradleOptsWithRam(4096, '-Dorg.gradle.daemon=false');
+    assert.ok(out.startsWith('-Dorg.gradle.daemon=false '), 'existing Gradle args must survive');
+    assert.ok(out.includes('-Xmx4096m'), 'heap cap must be appended');
+    assert.ok(out.includes('-XX:MaxMetaspaceSize=1024m'), 'metaspace for <8g is 1024m');
+  });
+
+  it('gradleOptsWithRam uses a larger metaspace at 8g and above', () => {
+    const out = gradleOptsWithRam(8192, undefined);
+    assert.ok(out.includes('-XX:MaxMetaspaceSize=1536m'), 'metaspace for >=8g is 1536m');
   });
 });
