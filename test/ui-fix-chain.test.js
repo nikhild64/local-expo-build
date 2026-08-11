@@ -16,6 +16,7 @@ const {
   runFixChain,
   buildDefaultPackageName,
   missingPartsLabel,
+  offerBuildAfterFixAll,
 } = require('../ui/fix-chain.js');
 
 /**
@@ -169,6 +170,84 @@ describe('runFixChain — keystore auto-setup (single endpoint)', () => {
     assert.deepStrictEqual(alerts, [
       ['Could not set up keystore', 'keytool missing', 'error'],
     ]);
+  });
+});
+
+describe('offerBuildAfterFixAll (post-Fix All one-shot)', () => {
+  function makeDeps(overrides = {}) {
+    const calls = [];
+    const deps = {
+      choose: async (cfg) => {
+        calls.push(['choose', cfg.title, cfg.confirmText]);
+        return overrides.choice ?? 'none';
+      },
+      selectArtifact: async (kind) => calls.push(['selectArtifact', kind]),
+      switchTab: async (tab) => calls.push(['switchTab', tab]),
+      refresh: async () => calls.push(['refresh']),
+      startBuild: async () => calls.push(['startBuild']),
+      ...overrides,
+    };
+    return { calls, deps };
+  }
+
+  it('pre-selects AAB, opens the Build tab, refreshes state, then starts the build', async () => {
+    const { calls, deps } = makeDeps({ choice: 'aab' });
+    const started = await offerBuildAfterFixAll(deps);
+    assert.strictEqual(started, true);
+    assert.deepStrictEqual(calls, [
+      ['choose', 'Start a build now?', 'Build'],
+      ['selectArtifact', 'aab'],
+      ['switchTab', 'build'],
+      ['refresh'],
+      ['startBuild'],
+    ]);
+  });
+
+  it('pre-selects APK when that artifact is chosen', async () => {
+    const { calls, deps } = makeDeps({ choice: 'apk' });
+    const started = await offerBuildAfterFixAll(deps);
+    assert.strictEqual(started, true);
+    assert.deepStrictEqual(
+      calls.filter((c) => c[0] === 'selectArtifact'),
+      [['selectArtifact', 'apk']]
+    );
+  });
+
+  it('offers both artifacts plus a "Not now" option', async () => {
+    const { calls, deps } = makeDeps({ choice: 'none' });
+    await offerBuildAfterFixAll(deps);
+    const [chooseCfg] = calls;
+    assert.strictEqual(chooseCfg[0], 'choose');
+    // The option list itself isn't captured by the stub — assert via a direct
+    // call that records the full config.
+    let captured = null;
+    await offerBuildAfterFixAll({
+      ...deps,
+      choose: async (cfg) => {
+        captured = cfg;
+        return 'none';
+      },
+    });
+    assert.deepStrictEqual(
+      captured.options.map((o) => o.value),
+      ['aab', 'apk', 'none']
+    );
+    assert.strictEqual(captured.confirmText, 'Build');
+  });
+
+  it('does nothing when the user picks "Not now"', async () => {
+    const { calls, deps } = makeDeps({ choice: 'none' });
+    const started = await offerBuildAfterFixAll(deps);
+    assert.strictEqual(started, false);
+    assert.strictEqual(calls.length, 1, 'only the artifact modal should run');
+    assert.strictEqual(calls[0][0], 'choose');
+  });
+
+  it('does nothing when the modal is cancelled (null)', async () => {
+    const { calls, deps } = makeDeps({ choice: null });
+    const started = await offerBuildAfterFixAll(deps);
+    assert.strictEqual(started, false);
+    assert.strictEqual(calls.length, 1);
   });
 });
 

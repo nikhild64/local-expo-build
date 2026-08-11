@@ -115,5 +115,48 @@
     return { ready: true, generatedPassword, storeFile, keyAlias, params };
   }
 
-  return { runFixChain, buildDefaultPackageName, missingPartsLabel };
+  /**
+   * One-shot "keep going" offered after the Doctor tab's Fix All completes:
+   * "Start a build now?" with the artifact picker pre-selected (AAB or APK).
+   * Mirrors the CLI's init follow-up (maybePromptBuildNow).
+   *
+   * Pure orchestration — every browser primitive is injected through `deps`:
+   *
+   *   choose(config)   -> Promise<'aab' | 'apk' | 'none' | null>  artifact modal
+   *   selectArtifact(kind) -> void   set the Build tab's AAB/APK picker
+   *   switchTab(tab)   -> void        open the Build tab
+   *   refresh()        -> Promise     re-fetch doctor + keystore state so the
+   *                                   build gate sees the fixed project
+   *   startBuild()     -> void        submit the build form
+   *
+   * Returns true when a build was started, false when the user declined.
+   */
+  async function offerBuildAfterFixAll(deps) {
+    const choice = await deps.choose({
+      title: 'Start a build now?',
+      message:
+        'Your project is fixed and ready to build. Pick an artifact — the Build tab opens pre-selected and the build starts automatically.',
+      options: [
+        { value: 'aab', label: 'AAB (bundleRelease)', detail: 'Upload to the Play Store' },
+        { value: 'apk', label: 'APK (assembleRelease)', detail: 'Sideload / direct install' },
+        { value: 'none', label: 'Not now', detail: 'Stay on the Doctor tab' },
+      ],
+      confirmText: 'Build',
+    });
+
+    if (choice !== 'aab' && choice !== 'apk') return false;
+
+    await deps.selectArtifact(choice);
+    await deps.switchTab('build');
+    await deps.refresh();
+    await deps.startBuild();
+    return true;
+  }
+
+  return {
+    runFixChain,
+    buildDefaultPackageName,
+    missingPartsLabel,
+    offerBuildAfterFixAll,
+  };
 });

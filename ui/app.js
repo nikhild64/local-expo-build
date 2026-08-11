@@ -501,14 +501,17 @@
   }
 
   // ── Format Selector ──
+  function selectArtifact(kind) {
+    if (isBuilding) return;
+    selectedKind = kind;
+    pillOpts.forEach((b) => b.classList.toggle('active', b.getAttribute('data-val') === kind));
+    saveBuildSettings();
+  }
+
   function setupPillSelector() {
     pillOpts.forEach((btn) => {
       btn.addEventListener('click', () => {
-        if (isBuilding) return;
-        pillOpts.forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        selectedKind = btn.getAttribute('data-val');
-        saveBuildSettings();
+        selectArtifact(btn.getAttribute('data-val'));
       });
     });
   }
@@ -1076,8 +1079,21 @@
         copyLabel: generatedKeystorePass ? 'Generated keystore password (shown once — copy it):' : '',
       });
 
-      fetchDoctor(true);
-      fetchKeystoreStatus();
+      // One-shot "keep going": offer to start a build with the artifact
+      // picker pre-selected (mirrors the CLI init follow-up). The orchestration
+      // lives in fix-chain.js so it is unit-testable; declining keeps the
+      // usual background refresh so the Doctor tab stays current.
+      const started = await LocalExpoBuildFixChain.offerBuildAfterFixAll({
+        choose: (cfg) => showChoiceModal(cfg),
+        selectArtifact: (kind) => selectArtifact(kind),
+        switchTab: (tab) => switchTab(tab),
+        refresh: () => Promise.all([fetchDoctor(true), fetchKeystoreStatus()]),
+        startBuild: () => buildForm.requestSubmit(),
+      });
+      if (!started) {
+        fetchDoctor(true);
+        fetchKeystoreStatus();
+      }
     } catch (err) {
       await showAlert('Error', err?.message || 'An error occurred during quick fix.', 'error');
     } finally {
