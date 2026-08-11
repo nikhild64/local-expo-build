@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One-click Build & Fix in the browser UI.** Starting a build now fixes the
+  blocking prerequisites inline with a single confirmation: a missing
+  `expo.android.package` is auto-applied (same smart default as doctor) and a
+  missing release keystore is set up via rehydrate → EAS fetch → local
+  generation (the generated password is shown once with a copy button), then
+  the build starts. EAS link / `eas.json` stay optional — they never block a
+  build.
+- **`build android` auto-fix pre-flight.** In an interactive terminal,
+  `local-expo-build build android` checks the two file-based prerequisites
+  (Android package, release signing keystore) before the pipeline starts and
+  offers to set them up with one confirm — no more failing at step 5/6.
+  Non-TTY and `--dry-run` behavior is unchanged.
+- **`init` skips the redundant keystore prompt.** When doctor's pre-flight (or
+  a previous run) already configured `keystore.properties`, `init` no longer
+  asks "Set up the Android signing keystore now?" a second time.
 - **Smart first tab in the browser UI.** The UI now opens on the **Doctor**
   tab when the project isn't ready to build (failing checks, missing
   `expo.android.package`, or no signing keystore) so the one-click fixes are

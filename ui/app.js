@@ -879,6 +879,19 @@
         prebuild: !document.getElementById('opt-no-prebuild').checked,
       };
 
+      // One-click Build & Fix (P0-1): when the project isn't ready to build
+      // (missing Android package or, for release builds, a signing keystore),
+      // fix the blocking pieces inline with a single confirmation and then
+      // start the build. EAS link / eas.json stay optional — builds run
+      // without them.
+      const isDebug = payload.debug;
+      const needsPackage = !!(lastDoctorSummary && lastDoctorSummary.capabilities && lastDoctorSummary.capabilities.canFixAndroidPackage);
+      const needsKeystore = !isDebug && lastKeystoreStatus && !(lastKeystoreStatus.configured && lastKeystoreStatus.props);
+      if (needsPackage || needsKeystore) {
+        const ready = await fixBlockingBuildIssues({ needsPackage, needsKeystore });
+        if (!ready) return; // user cancelled or a fix failed (error already shown)
+      }
+
       try {
         const res = await fetch('/api/build', {
           method: 'POST',
@@ -1094,6 +1107,108 @@
         btnFixAll.textContent = originalText;
       }
     }
+  }
+
+  /**
+   * P0-1: fixes the *blocking* build prerequisites inline before a build
+   * starts — the Android package (auto-applied with the same smart default
+   * doctor uses) and the release signing keystore (rehydrate → fetch from EAS
+   * when linked & authenticated → generate locally). Returns true when the
+   * project is ready to build, false when the user cancelled or a fix failed.
+   */
+  async function fixBlockingBuildIssues({ needsPackage, needsKeystore }) {
+    const caps = (lastDoctorSummary && lastDoctorSummary.capabilities) || {};
+    const parts = [];
+    if (needsPackage) parts.push('the Android package name');
+    if (needsKeystore) parts.push('a release signing keystore');
+
+    const confirmed = await showModal({
+      title: 'Fix setup before building?',
+      message: `This project is missing ${parts.join(' and ')}. Fix them automatically and start the build?`,
+      type: 'info',
+      confirmText: 'Fix & Build',
+      cancelText: 'Cancel',
+      showCancel: true,
+    });
+    if (!confirmed) return false;
+
+    // 1. Android package — apply the same smart default doctor suggests.
+    if (needsPackage) {
+      const rawFolder = (currentStatusData && currentStatusData.folderName) || 'app';
+      const cleanName = rawFolder.toLowerCase().replace(/[^a-z0-9]/g, '') || 'app';
+      const defaultPkg = `com.example.${cleanName}`;
+      const { res, data } = await apiRequest('/api/doctor/fix-package', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packageName: defaultPkg }),
+      });
+      if (!res.ok) {
+        await showAlert('Could not fix package name', data.error || 'Failed to set the Android package.', 'error');
+        return false;
+      }
+    }
+
+    // 2. Signing keystore — rehydrate → fetch from EAS → generate locally.
+    if (needsKeystore) {
+      let ready = false;
+      if (caps.rehydrateAvailable) {
+        const { res, data } = await apiRequest('/api/doctor/rehydrate', { method: 'POST' });
+        ready = res.ok;
+        if (!res.ok) await showAlert('Rehydrate failed', data.error || 'Could not rehydrate the keystore.', 'error');
+      }
+      if (!ready && caps.canSetupKeystore) {
+        const linked = !!(currentStatusData && currentStatusData.easLink && currentStatusData.easLink.kind === 'linked');
+        const authed = !!(easAuth && easAuth.authenticated);
+        if (linked && authed) {
+          try {
+            const { res } = await apiRequest('/api/keystore/fetch-eas', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ overwrite: true }),
+            });
+            ready = res.ok;
+          } catch {
+            // ignore — fall through to local generation
+          }
+        }
+        if (!ready) {
+          const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
+          const { res, data } = await apiRequest('/api/keystore/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              provider: 'generate',
+              params: {
+                filename: 'release.p12',
+                keyAlias: 'release',
+                storePassword: pass,
+                keyPassword: pass,
+                cn: 'Release Signer',
+                org: 'LocalExpoBuild',
+                country: 'US',
+              },
+            }),
+          });
+          if (!res.ok) {
+            await showAlert('Could not set up keystore', data.error || 'Keystore setup failed.', 'error');
+            return false;
+          }
+          // The generated password is shown once — offer a copy button.
+          await showModal({
+            title: 'Release keystore created',
+            message: 'A new release keystore (release.p12) was generated for this project. The password is shown once — copy it now; you will need it for Play Store uploads and EAS submit.',
+            type: 'success',
+            confirmText: 'OK',
+            copyValue: pass,
+            copyLabel: 'Generated keystore password (shown once):',
+          });
+          ready = true;
+        }
+      }
+      if (!ready) return false;
+    }
+
+    return true;
   }
 
   async function fetchDoctor(force = false) {
