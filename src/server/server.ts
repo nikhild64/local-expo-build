@@ -442,6 +442,9 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
                   storeFile: auto.storeFile,
                   keyAlias: auto.keyAlias,
                   generatedPassword: auto.generatedPassword,
+                  // Exact params used — lets the UI display the filename / alias
+                  // (and identity) without any client-side fallback.
+                  params: auto.params,
                 };
               }
             } else if (provider === 'import') {

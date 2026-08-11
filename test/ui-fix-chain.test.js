@@ -123,19 +123,21 @@ describe('runFixChain — keystore auto-setup (single endpoint)', () => {
   });
 
   it('returns the generated password and keystore identity for the copy modal', async () => {
+    const params = { filename: 'custom.p12', keyAlias: 'ship', storePassword: 'abc123def456', keyPassword: 'abc123def456' };
     const { deps } = makeDeps({
       apiOverrides: {
         '/api/keystore/auto-setup': {
           ok: true,
-          data: { provider: 'generate', storeFile: 'release.p12', keyAlias: 'release', generatedPassword: 'abc123def456' },
+          data: { provider: 'generate', storeFile: 'custom.p12', keyAlias: 'ship', generatedPassword: 'abc123def456', params },
         },
       },
     });
     const result = await runFixChain({ needsPackage: false, needsKeystore: true }, deps);
     assert.strictEqual(result.ready, true);
     assert.strictEqual(result.generatedPassword, 'abc123def456');
-    assert.strictEqual(result.storeFile, 'release.p12');
-    assert.strictEqual(result.keyAlias, 'release');
+    assert.strictEqual(result.storeFile, 'custom.p12');
+    assert.strictEqual(result.keyAlias, 'ship');
+    assert.deepStrictEqual(result.params, params);
   });
 
   it('reports ready without a password when a non-generate provider wins', async () => {

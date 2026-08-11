@@ -50,6 +50,13 @@ export interface AutoSetupKeystoreResult {
   keyAlias: string;
   /** Present only when `provider === 'generate'` — shown once to the user. */
   generatedPassword?: string;
+  /**
+   * The exact params used for local generation (defaults + overrides + the
+   * fresh password). Present only when `provider === 'generate'`, so UI
+   * surfaces can display the filename/alias/identity without falling back to
+   * client-side defaults.
+   */
+  params?: GenerateKeystoreParams;
   /** Non-fatal notes from failed rehydrate / EAS attempts. */
   warnings: string[];
 }
@@ -76,10 +83,18 @@ function randomPassword(): string {
  * path — UI, CLI fix-all, build pre-flight — uses one implementation and the
  * shown-once password always comes from the server.
  */
+export interface AutoGenerateKeystoreResult {
+  generatedPassword: string;
+  storeFile: string;
+  keyAlias: string;
+  /** The exact params handed to keytool (defaults + overrides + password). */
+  params: GenerateKeystoreParams;
+}
+
 export async function autoGenerateKeystore(
   cwd: string,
   overrides: GenerateKeystoreParams = {}
-): Promise<{ generatedPassword: string; storeFile: string; keyAlias: string }> {
+): Promise<AutoGenerateKeystoreResult> {
   const pass = randomPassword();
   const params: GenerateKeystoreParams = {
     ...GENERATE_DEFAULTS,
@@ -92,7 +107,7 @@ export async function autoGenerateKeystore(
   const props = readKeystoreProps(cwd)!;
   finalize(cwd, props);
   log.ok(`Generated ${params.filename} keystore (alias=${params.keyAlias}).`);
-  return { generatedPassword: pass, storeFile: props.storeFile, keyAlias: props.keyAlias };
+  return { generatedPassword: pass, storeFile: props.storeFile, keyAlias: props.keyAlias, params };
 }
 
 function finalize(cwd: string, props: KeystoreProps): void {
@@ -143,6 +158,7 @@ export async function autoSetupKeystore(
     storeFile: auto.storeFile,
     keyAlias: auto.keyAlias,
     generatedPassword: auto.generatedPassword,
+    params: auto.params,
     warnings,
   };
 }
