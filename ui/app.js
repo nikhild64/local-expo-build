@@ -911,7 +911,7 @@
                 easUploadMsg = ' & uploaded to EAS Cloud';
               }
             } catch {}
-            fixesApplied.push(`Generated new release keystore (release.p12) & credentials.json${easUploadMsg}`);
+            fixesApplied.push(`Generated new release keystore (release.p12) — PASSWORD (shown once, save it): ${pass}${easUploadMsg}`);
           }
         }
       }
@@ -1625,6 +1625,7 @@
           `• Saved locally to android/app/release.p12\n` +
           `• Configured in keystore.properties\n` +
           `• Synced with credentials.json\n` +
+          `• 🔑 Generated password (shown once — SAVE IT NOW): ${pass}\n` +
           `• ${syncMsg}`,
         'success'
       );

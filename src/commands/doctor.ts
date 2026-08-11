@@ -952,6 +952,7 @@ export async function runDoctor({
             country: 'US',
           });
           log.ok('Generated release.p12 keystore & credentials.json.');
+          log.warn(`SAVE THIS GENERATED KEYSTORE PASSWORD (shown once): ${pass}`);
         } catch (err: any) {
           log.error(`Keystore generation failed: ${err?.message || err}`);
         }
