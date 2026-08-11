@@ -432,9 +432,27 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
               try { fs.unlinkSync(tmpPath); } catch {}
             }
             uploadError = err?.message || String(err);
+            // A busboy error (e.g. file over the size limit) aborts the request
+            // stream, so 'finish' may never fire — respond here instead of
+            // leaving the client hanging.
+            if (!res.headersSent) {
+              res.writeHead(400);
+              res.end(JSON.stringify({ error: uploadError }));
+            }
           });
 
           bb.on('finish', async () => {
+            if (res.headersSent) return;
+            // busboy's 'finish' can fire while the piped file stream is still
+            // buffered to disk; wait for it to close before checking the file.
+            if (wsStream) {
+              const ws = wsStream;
+              await new Promise<void>((resolve) => {
+                if (ws.closed) return resolve();
+                ws.once('close', () => resolve());
+                ws.once('error', () => resolve());
+              });
+            }
             if (uploadError) {
               if (tmpPath && fs.existsSync(tmpPath)) {
                 try { fs.unlinkSync(tmpPath); } catch {}
