@@ -11,6 +11,7 @@ import { ensureKeystore } from '../core/keystore';
 import { ensureGitignoreEntries } from '../util/gitignore';
 import { detectPackageManager, formatCliCommand, formatRunScript } from '../util/resolveProjectBin';
 import { TEMPLATE_SCRIPTS } from '../core/scaffoldScripts';
+import { readKeystoreProps } from '../core/setupSigning';
 import { runDoctor } from './doctor';
 
 const APK_CHAIN = 'node scripts/build.js apk';
@@ -118,7 +119,11 @@ export async function runInit(opts: InitCommandOpts, cmd: Command): Promise<void
   ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
 
   if (opts.keystore !== false) {
-    if (process.stdin.isTTY) {
+    if (readKeystoreProps(cwd)) {
+      // Doctor's pre-flight (or a previous run) already configured the
+      // keystore — don't ask again (ensureKeystore would no-op anyway).
+      log.dim('Keystore already configured — skipping keystore setup.');
+    } else if (process.stdin.isTTY) {
       const wantsKs = await confirm({
         message: 'Set up the Android signing keystore now?',
         default: true,

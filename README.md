@@ -68,7 +68,7 @@ Options: `npx local-expo-build ui [--port 3847] [--no-open] [--logs]`
 
 - **Security Boundary**: Binds strictly to `127.0.0.1` (localhost only).
 - **Chai Visual Theme**: Dark canvas (`#14100c`), warm accent (`#f0824e`), Nunito + JetBrains Mono typography.
-- **Build Tab**: Trigger APK/AAB builds, configure flags (`--clean`, `--no-bump`, `--no-sync`), and view live streaming build logs via SSE.
+- **Build Tab**: Trigger APK/AAB builds, configure flags (`--clean`, `--no-bump`, `--no-sync`), and view live streaming build logs via SSE. **One-click Build & Fix**: if the project is missing its Android package or release keystore, clicking **Start Local Build** fixes them inline (with a single confirmation) and then builds.
 - **Doctor Tab**: View environment diagnostics cards and trigger 1-click fixes (package name, EAS project linking, `eas.json` creation, and keystore rehydration).
 - **Keystore Wizard & Upload**: Upload `.p12` / `.jks` files directly via multipart drag-and-drop, import paths, generate new keypairs via `keytool`, or rehydrate from `credentials.json`.
 - **One-click EAS actions**: Link an EAS project, generate `eas.json` through `eas build:configure`, and fetch Android signing credentials directly from Expo's API. Authentication uses `EXPO_TOKEN`, an existing `eas login` session, or a token pasted into the local UI (held only in memory).
@@ -121,7 +121,7 @@ cd <your-expo-project>
 npx local-expo-build init
 ```
 
-`init` runs `doctor` first as a pre-flight, walks you through any missing setup (EAS link, `eas.json`, keystore), then drops the build scripts and adds the `build:android:apk` / `build:android:aab` entries to your `package.json`. Then:
+`init` runs `doctor` first as a pre-flight, walks you through any missing setup (EAS link, `eas.json`, keystore), then drops the build scripts and adds the `build:android:apk` / `build:android:aab` entries to your `package.json`. If doctor's fix-all already configured the keystore, `init` skips its own keystore prompt (no double setup). Then:
 
 ```bash
 npm run build:android:aab     # release AAB → android/app/build/outputs/bundle/release/app-release.aab
@@ -192,6 +192,12 @@ local-expo-build update-scripts [-y|--yes]
 
 Global flags: `--cwd <path>`, `--verbose`, `--dry-run`, `--no-update-check`, `--yes-update`.
 
+> **Auto-fix pre-flight.** In an interactive terminal, `local-expo-build build
+> android` checks the two file-based prerequisites (Android package + release
+> signing keystore) before the pipeline starts and offers to set them up with
+> one confirm. Non-TTY / `--dry-run` are unchanged — the pipeline just fails
+> with its normal error if something's missing.
+>
 > **Dry-run** is wired into `build android` and the scaffolded orchestrator. Use it to preview the full pipeline (great for screenshots, sanity checks, CI plan-mode):
 >
 > ```bash

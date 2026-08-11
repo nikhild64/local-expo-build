@@ -39,7 +39,7 @@ interface CredentialsJsonCheck {
   valid: boolean;
 }
 
-interface AndroidPackageCheck {
+export interface AndroidPackageCheck {
   result: CheckResult;
   pkg: string | null;
   source: 'app.json' | 'dynamic' | 'dynamic-unreadable' | 'none';
@@ -141,7 +141,7 @@ function easLinkCheck(easLink: EasLinkResult): CheckResult {
 // at least two segments. Gradle is the authoritative checker — we just flag obvious typos.
 const ANDROID_PKG_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
 
-function androidPackageCheck(cwd: string): AndroidPackageCheck {
+export function androidPackageCheck(cwd: string): AndroidPackageCheck {
   const resolved = readExpoConfig(cwd);
   const hasDynamicConfig =
     fs.existsSync(path.join(cwd, 'app.config.js')) ||

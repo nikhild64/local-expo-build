@@ -11,6 +11,9 @@ import { detectExpoSdk } from '../core/sdkDetect';
 import { assertMacOS, printIosExperimentalBanner } from '../util/platform';
 import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
 import { maybePromptScriptUpdate } from '../util/maybePromptScriptUpdate';
+import { androidPackageCheck, setAndroidPackage } from './doctor';
+import { readKeystoreProps } from '../core/setupSigning';
+import { ensureKeystore } from '../core/keystore';
 import { detectIosProject } from '../core/ios/detect';
 import { readIosCredentials } from '../core/ios/credentials';
 import {
@@ -44,6 +47,66 @@ async function resolveCleanFlag(
   });
 }
 
+/**
+ * Fast pre-flight for `build android` (P0-2): checks the two file-based
+ * prerequisites that would otherwise fail the pipeline late — the Android
+ * package (`expo.android.package`) and the release signing keystore. In an
+ * interactive terminal it offers to fix both with a single confirm before the
+ * pipeline starts; non-TTY and `--dry-run` leave the existing behavior
+ * untouched (the pipeline surfaces the problem with its normal error).
+ */
+async function preflightAndroidBuild(
+  cwd: string,
+  opts: { dryRun: boolean; debug: boolean }
+): Promise<void> {
+  if (opts.dryRun || !process.stdin.isTTY) return;
+
+  // File-based checks only — no env probing (JDK, ANDROID_HOME) here; that is
+  // the job of `doctor`, and builds shouldn't slow down for it.
+  const pkg = androidPackageCheck(cwd);
+  const needsPackage = pkg.source === 'app.json' && !pkg.pkg;
+  const needsKeystore = !opts.debug && !readKeystoreProps(cwd);
+
+  if (!needsPackage && !needsKeystore) return;
+
+  const missing = [
+    needsPackage ? 'the Android package (expo.android.package)' : null,
+    needsKeystore ? 'a release signing keystore' : null,
+  ]
+    .filter(Boolean)
+    .join(' and ');
+
+  const shouldFix = await confirm({
+    message: `This project is missing ${missing}. Set it up automatically before building?`,
+    default: true,
+  });
+  console.log('');
+  if (!shouldFix) {
+    log.dim('Proceeding without setup — the build may fail. Run `local-expo-build doctor` to inspect.');
+    return;
+  }
+
+  if (needsPackage) {
+    const folder = path.basename(cwd).toLowerCase().replace(/[^a-z0-9]/g, '') || 'app';
+    const pkgName = `com.example.${folder}`;
+    try {
+      setAndroidPackage(cwd, pkgName);
+      log.ok(`Set expo.android.package = "${pkgName}" in app.json`);
+    } catch (err: any) {
+      log.error(`Could not set Android package: ${err?.message || err}`);
+    }
+  }
+
+  if (needsKeystore) {
+    try {
+      await ensureKeystore(cwd);
+      log.ok('Signing keystore configured.');
+    } catch (err: any) {
+      log.error(`Keystore setup failed: ${err?.message || err}`);
+    }
+  }
+}
+
 export function registerBuildCommand(program: Command): void {
   const build = program.command('build').description('Build commands');
 
@@ -67,6 +130,8 @@ export function registerBuildCommand(program: Command): void {
         dryRun: ctx.dryRun,
         skip: ctx.skipUpdateCheck,
       });
+
+      await preflightAndroidBuild(ctx.cwd, { dryRun: ctx.dryRun, debug: !!opts.debug });
 
       const shouldClean = await resolveCleanFlag(opts, ctx);
       await runAndroidBuild({
