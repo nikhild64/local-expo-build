@@ -720,7 +720,18 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
     };
 
     res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'text/plain' });
-    fs.createReadStream(filePath).pipe(res);
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', () => {
+      // The file vanished between existsSync and open (or another read error):
+      // answer 404 instead of crashing the process with an unhandled 'error' (D10).
+      if (!res.headersSent) {
+        res.writeHead(404);
+        res.end('Not found');
+      } else {
+        res.destroy();
+      }
+    });
+    stream.pipe(res);
   });
 
   const openSockets = new Set<net.Socket>();
