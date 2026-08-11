@@ -621,6 +621,16 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
     port: actualPort,
     url,
     close: async () => {
+      // 0. Stop any in-flight build so the child Gradle process is terminated
+      //    cleanly instead of being killed abruptly by process.exit below.
+      if (buildAbort) {
+        try {
+          buildAbort.abort();
+        } catch {
+          // ignore
+        }
+      }
+
       // 1. Close all active SSE response streams
       for (const resStream of sseClients) {
         try {
