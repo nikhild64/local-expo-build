@@ -44,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backed up off-machine; rehydrate and EAS fetch keep your existing
   password, so no new one is shown. EAS is never required: builds work with
   a locally generated keystore.
+- **Keystore wizard paths unified.** The EAS tab's quick **Generate New
+  Keystore** button no longer builds the generate payload or password in the
+  browser — it uses the same shared server defaults (`release.p12`, alias
+  `release`) with a server-generated random password that is returned and
+  shown once with the **Copy** button. The Doctor tab's **Rehydrate Keystore**
+  button now posts the same explicit rehydrate provider as the wizard's
+  Rehydrate tab, and the duplicate `/api/doctor/rehydrate` endpoint was
+  removed — every keystore path goes through the auto-setup chain or a single
+  explicit provider.
 - **`init` skips the redundant keystore prompt.** When doctor's pre-flight (or
   a previous run) already configured `keystore.properties`, `init` no longer
   asks "Set up the Android signing keystore now?" a second time.

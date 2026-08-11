@@ -98,6 +98,8 @@ The **Keystore Management Wizard** provides 5 flexible sub-tabs:
 - **Generate New**: Generate a new release keypair using `keytool` directly within the browser interface.
 - **Rehydrate**: Automatically recreate `keystore.properties` and restore `.jks` from `credentials.json` without re-entering passwords.
 
+The EAS tab's quick **Generate New Keystore** button and the Doctor tab's **Rehydrate Keystore** button use the same providers as these sub-tabs: generation runs with the shared server defaults (`release.p12`, alias `release`) and a server-generated password shown once with a **Copy** button; rehydration posts the same explicit rehydrate provider as the Rehydrate tab.
+
 ![Keystore Tab - EAS Fetch & Credentials Management](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/keystore-tab.png)
 
 > **Keystore auto-setup (one-click).** Whenever a fix flow needs a release
