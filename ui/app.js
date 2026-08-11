@@ -961,8 +961,14 @@
     easTokenForm.addEventListener('submit', submitEasToken);
 
     btnDoctorRehydrate.addEventListener('click', async () => {
+      // Same explicit provider the Keystore wizard's Rehydrate tab uses — the
+      // old /api/doctor/rehydrate route was dropped (one rehydrate path).
       try {
-        const res = await fetch('/api/doctor/rehydrate', { method: 'POST' });
+        const res = await fetch('/api/keystore/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: 'rehydrate' }),
+        });
         const data = await res.json();
         if (res.ok) {
           await showAlert('Success', 'Keystore rehydrated successfully!', 'success');
@@ -1034,46 +1040,14 @@
         if (res.res.ok) fixesApplied.push('Created eas.json');
       }
 
-      // 4. Keystore Setup (Rehydrate / Fetch from EAS Cloud / Generate)
-      if (caps.rehydrateAvailable) {
-        const res = await apiRequest('/api/doctor/rehydrate', { method: 'POST' });
-        if (res.res.ok) fixesApplied.push('Synced credentials.json & keystore configuration');
-      } else if (caps.canSetupKeystore) {
-        let easFetched = false;
-        try {
-          const fetchRes = await apiRequest('/api/keystore/fetch-eas', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ overwrite: true }),
-          });
-          if (fetchRes.res.ok) {
-            easFetched = true;
-            fixesApplied.push(`Fetched cloud release keystore (${fetchRes.data.storeFile || 'release.jks'}) & credentials.json from EAS`);
-          }
-        } catch {
-          // No EAS keystore available or unlinked/unauthenticated
-        }
-
-        if (!easFetched) {
-          const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
-          generatedKeystorePass = pass;
-          const res = await apiRequest('/api/keystore/setup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              provider: 'generate',
-              params: {
-                filename: 'release.p12',
-                keyAlias: 'release',
-                storePassword: pass,
-                keyPassword: pass,
-                cn: 'Release Signer',
-                org: 'LocalExpoBuild',
-                country: 'US',
-              },
-            }),
-          });
-          if (res.res.ok) {
+      // 4. Keystore auto-setup — one call; the rehydrate → EAS fetch →
+      // generate decision is server-side (src/core/keystore/autoSetup.ts).
+      if (caps.rehydrateAvailable || caps.canSetupKeystore) {
+        const res = await apiRequest('/api/keystore/auto-setup', { method: 'POST' });
+        if (res.res.ok) {
+          const data = res.data || {};
+          if (data.provider === 'generate') {
+            generatedKeystorePass = data.generatedPassword || null;
             let easUploadMsg = '';
             try {
               const uploadRes = await apiRequest('/api/eas/keystores/upload', { method: 'POST' });
@@ -1081,7 +1055,11 @@
                 easUploadMsg = ' & uploaded to EAS Cloud';
               }
             } catch {}
-            fixesApplied.push(`Generated new release keystore (release.p12) — PASSWORD (shown once, save it): ${pass}${easUploadMsg}`);
+            fixesApplied.push(`Generated new release keystore (${data.storeFile || 'release.p12'}) — PASSWORD (shown once, save it): ${data.generatedPassword}${easUploadMsg}`);
+          } else if (data.provider === 'eas') {
+            fixesApplied.push(`Fetched cloud release keystore (${data.storeFile || 'release.jks'}) & credentials.json from EAS`);
+          } else if (data.provider === 'rehydrate') {
+            fixesApplied.push('Synced credentials.json & keystore configuration');
           }
         }
       }
@@ -1115,100 +1093,46 @@
    * doctor uses) and the release signing keystore (rehydrate → fetch from EAS
    * when linked & authenticated → generate locally). Returns true when the
    * project is ready to build, false when the user cancelled or a fix failed.
+   *
+   * The decision chain lives in fix-chain.js (runFixChain) with injected
+   * deps so it is unit-testable in Node; this wrapper only adapts browser
+   * state and UI primitives to that interface.
    */
   async function fixBlockingBuildIssues({ needsPackage, needsKeystore }) {
-    const caps = (lastDoctorSummary && lastDoctorSummary.capabilities) || {};
-    const parts = [];
-    if (needsPackage) parts.push('the Android package name');
-    if (needsKeystore) parts.push('a release signing keystore');
+    const result = await LocalExpoBuildFixChain.runFixChain(
+      { needsPackage, needsKeystore },
+      {
+        confirm: (message) =>
+          showModal({
+            title: 'Fix setup before building?',
+            message,
+            type: 'info',
+            confirmText: 'Fix & Build',
+            cancelText: 'Cancel',
+            showCancel: true,
+          }),
+        alert: (title, message, type) => showAlert(title, message, type),
+        api: async (url, options) => {
+          const { res, data } = await apiRequest(url, options);
+          return { ok: res.ok, data };
+        },
+        folderName: (currentStatusData && currentStatusData.folderName) || 'app',
+      }
+    );
 
-    const confirmed = await showModal({
-      title: 'Fix setup before building?',
-      message: `This project is missing ${parts.join(' and ')}. Fix them automatically and start the build?`,
-      type: 'info',
-      confirmText: 'Fix & Build',
-      cancelText: 'Cancel',
-      showCancel: true,
-    });
-    if (!confirmed) return false;
-
-    // 1. Android package — apply the same smart default doctor suggests.
-    if (needsPackage) {
-      const rawFolder = (currentStatusData && currentStatusData.folderName) || 'app';
-      const cleanName = rawFolder.toLowerCase().replace(/[^a-z0-9]/g, '') || 'app';
-      const defaultPkg = `com.example.${cleanName}`;
-      const { res, data } = await apiRequest('/api/doctor/fix-package', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packageName: defaultPkg }),
+    // The generated password is shown once — offer a copy button.
+    if (result.generatedPassword) {
+      await showModal({
+        title: 'Release keystore created',
+        message: 'A new release keystore (release.p12) was generated for this project. The password is shown once — copy it now; you will need it for Play Store uploads and EAS submit.',
+        type: 'success',
+        confirmText: 'OK',
+        copyValue: result.generatedPassword,
+        copyLabel: 'Generated keystore password (shown once):',
       });
-      if (!res.ok) {
-        await showAlert('Could not fix package name', data.error || 'Failed to set the Android package.', 'error');
-        return false;
-      }
     }
 
-    // 2. Signing keystore — rehydrate → fetch from EAS → generate locally.
-    if (needsKeystore) {
-      let ready = false;
-      if (caps.rehydrateAvailable) {
-        const { res, data } = await apiRequest('/api/doctor/rehydrate', { method: 'POST' });
-        ready = res.ok;
-        if (!res.ok) await showAlert('Rehydrate failed', data.error || 'Could not rehydrate the keystore.', 'error');
-      }
-      if (!ready && caps.canSetupKeystore) {
-        const linked = !!(currentStatusData && currentStatusData.easLink && currentStatusData.easLink.kind === 'linked');
-        const authed = !!(easAuth && easAuth.authenticated);
-        if (linked && authed) {
-          try {
-            const { res } = await apiRequest('/api/keystore/fetch-eas', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ overwrite: true }),
-            });
-            ready = res.ok;
-          } catch {
-            // ignore — fall through to local generation
-          }
-        }
-        if (!ready) {
-          const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
-          const { res, data } = await apiRequest('/api/keystore/setup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              provider: 'generate',
-              params: {
-                filename: 'release.p12',
-                keyAlias: 'release',
-                storePassword: pass,
-                keyPassword: pass,
-                cn: 'Release Signer',
-                org: 'LocalExpoBuild',
-                country: 'US',
-              },
-            }),
-          });
-          if (!res.ok) {
-            await showAlert('Could not set up keystore', data.error || 'Keystore setup failed.', 'error');
-            return false;
-          }
-          // The generated password is shown once — offer a copy button.
-          await showModal({
-            title: 'Release keystore created',
-            message: 'A new release keystore (release.p12) was generated for this project. The password is shown once — copy it now; you will need it for Play Store uploads and EAS submit.',
-            type: 'success',
-            confirmText: 'OK',
-            copyValue: pass,
-            copyLabel: 'Generated keystore password (shown once):',
-          });
-          ready = true;
-        }
-      }
-      if (!ready) return false;
-    }
-
-    return true;
+    return result.ready;
   }
 
   async function fetchDoctor(force = false) {
@@ -1873,26 +1797,20 @@
       btnTriggerEasAuto.textContent = 'Generating...';
     }
     try {
-      const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
+      // Generate with the shared auto defaults — no client-side password or
+      // hardcoded params. The server (autoSetup.ts) supplies the fresh
+      // password and returns it here for the shown-once modal.
       const { res, data } = await apiRequest('/api/keystore/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'generate',
-          params: {
-            filename: 'release.p12',
-            keyAlias: 'release',
-            storePassword: pass,
-            keyPassword: pass,
-            cn: 'Release Signer',
-            org: 'LocalExpoBuild',
-            country: 'US',
-          },
-        }),
+        body: JSON.stringify({ provider: 'generate' }),
       });
       if (!res.ok) {
         return showAlert('Could not generate keystore', data.error || 'Keytool generation failed.', 'error');
       }
+      const pass = data.generatedPassword;
+      const storeFile = data.storeFile || 'release.p12';
+      const keyAlias = data.keyAlias || 'release';
 
       let easSynced = false;
       let easSyncError = '';
@@ -1914,8 +1832,8 @@
       await showModal({
         title: 'Keystore Created & Configured!',
         message:
-          `Generated a new release keystore (release.p12) with alias "release".\n\n` +
-          `• Saved locally to android/app/release.p12\n` +
+          `Generated a new release keystore (${storeFile}) with alias "${keyAlias}".\n\n` +
+          `• Saved locally to android/app/${storeFile}\n` +
           `• Configured in keystore.properties\n` +
           `• Synced with credentials.json\n` +
           `• 🔑 Generated password (shown once — SAVE IT NOW): ${pass}\n` +
