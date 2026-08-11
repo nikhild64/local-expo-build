@@ -13,16 +13,19 @@ const os = require('os');
 const GRADLE = path.resolve(__dirname, '../android/app/build.gradle');
 const APP_JSON = path.resolve(__dirname, '../app.json');
 
-const gradle = fs.readFileSync(GRADLE, 'utf8');
-const m = gradle.match(/\bversionCode\s+(\d+)/);
-if (!m) { console.error('versionCode not found'); process.exit(1); }
-const versionCode = m[1];
-
 const app = JSON.parse(fs.readFileSync(APP_JSON, 'utf8'));
 const projectId = app.expo?.extra?.eas?.projectId;
 const applicationId = app.expo?.android?.package;
 const storeVersion = app.expo?.version ?? '1.0.0';
 if (!projectId) { console.log('No projectId — skip EAS sync'); process.exit(0); }
+
+// Read build.gradle only after confirming the sync is needed, so an
+// unlinked project (or one without android/ yet) exits cleanly instead
+// of crashing with ENOENT.
+const gradle = fs.readFileSync(GRADLE, 'utf8');
+const m = gradle.match(/\bversionCode\s+(\d+)/);
+if (!m) { console.error('versionCode not found'); process.exit(1); }
+const versionCode = m[1];
 
 function auth() {
   if (process.env.EXPO_TOKEN) return { token: process.env.EXPO_TOKEN };
