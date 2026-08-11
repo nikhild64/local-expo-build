@@ -21,6 +21,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Android package, release signing keystore) before the pipeline starts and
   offers to set them up with one confirm — no more failing at step 5/6.
   Non-TTY and `--dry-run` behavior is unchanged.
+- **Shared keystore auto-setup chain.** The rehydrate → EAS fetch → generate
+  decision now lives in one place — `autoSetupKeystore` in
+  `src/core/keystore/autoSetup.ts` — used by the browser UI (single
+  `/api/keystore/auto-setup` call replaces the old multi-step client chain),
+  `doctor --fix`, and the `build android` pre-flight.
+
+  Provider order (first success wins):
+
+  1. **Rehydrate** — bind `credentials.json` + `.jks` already on disk into
+     `keystore.properties` (no password re-entry).
+  2. **Fetch from EAS** — only when the project is linked to EAS *and*
+     authenticated (`EXPO_TOKEN`, an `eas login` session, or a token pasted
+     into the UI); reuses your existing cloud keystore and password.
+  3. **Generate locally** — `keytool` creates a new `release.p12` with a
+     fresh random password.
+
+  Failed rehydrate / EAS attempts fall through to the next provider with a
+  non-fatal warning; only generation failure aborts. When generation runs,
+  the password is shown exactly once — a **Copy** button in the UI, a
+  `SAVE THIS GENERATED KEYSTORE PASSWORD` line in the CLI — and must be
+  backed up off-machine; rehydrate and EAS fetch keep your existing
+  password, so no new one is shown. EAS is never required: builds work with
+  a locally generated keystore.
 - **`init` skips the redundant keystore prompt.** When doctor's pre-flight (or
   a previous run) already configured `keystore.properties`, `init` no longer
   asks "Set up the Android signing keystore now?" a second time.

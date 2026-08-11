@@ -100,6 +100,30 @@ The **Keystore Management Wizard** provides 5 flexible sub-tabs:
 
 ![Keystore Tab - EAS Fetch & Credentials Management](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/keystore-tab.png)
 
+> **Keystore auto-setup (one-click).** Whenever a fix flow needs a release
+> keystore that isn't configured yet — **Start Local Build** (Build & Fix),
+> **Fix All Issues**, `doctor --fix`, or the `build android` pre-flight — the
+> same shared chain runs:
+>
+> 1. **Rehydrate** — `credentials.json` + `.jks` already on disk are bound
+>    into `keystore.properties` (no password re-entry).
+> 2. **Fetch from EAS** — only when the project is linked to EAS and
+>    authenticated (`EXPO_TOKEN`, an `eas login` session, or a token pasted
+>    into the UI); reuses your existing cloud keystore and password.
+> 3. **Generate locally** — `keytool` creates a new `release.p12` with a
+>    fresh random password.
+>
+> If rehydrate or the EAS fetch fails, the chain falls through to the next
+> provider (reported as a non-fatal note). EAS is **never required** — a
+> locally generated keystore builds fine.
+>
+> **Password handling.** Only local generation produces a new password, and
+> it is shown exactly once: a **Copy** button in the browser UI, or a
+> `SAVE THIS GENERATED KEYSTORE PASSWORD` line in the terminal. Back it up
+> off-machine — losing it means you can't sign updates to the same app.
+> Rehydrate and EAS fetch keep your existing password, so no new one is
+> shown.
+
 #### 3. Triggering & Monitoring Local Builds (Build Android Tab)
 Navigate to the **Build Android** tab to start your build:
 - **Artifact Format**: Select **AAB (`bundleRelease`)** for Google Play Store release or **APK (`assembleRelease`)** for direct device installation and testing.
@@ -195,8 +219,11 @@ Global flags: `--cwd <path>`, `--verbose`, `--dry-run`, `--no-update-check`, `--
 > **Auto-fix pre-flight.** In an interactive terminal, `local-expo-build build
 > android` checks the two file-based prerequisites (Android package + release
 > signing keystore) before the pipeline starts and offers to set them up with
-> one confirm. Non-TTY / `--dry-run` are unchanged — the pipeline just fails
-> with its normal error if something's missing.
+> one confirm. The keystore step uses the same shared auto-setup chain as the
+> UI (`src/core/keystore/autoSetup.ts`): rehydrate from `credentials.json` →
+> fetch from EAS (when linked & authenticated) → generate locally. Non-TTY /
+> `--dry-run` are unchanged — the pipeline just fails with its normal error
+> if something's missing.
 >
 > **Dry-run** is wired into `build android` and the scaffolded orchestrator. Use it to preview the full pipeline (great for screenshots, sanity checks, CI plan-mode):
 >
