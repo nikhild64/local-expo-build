@@ -82,6 +82,12 @@ Launch `npx local-expo-build ui` and navigate to the **Doctor** tab. The UI perf
 
 If any checks fail or require setup (such as missing `expo.android.package` or an unlinked EAS project), Environment Doctor highlights them and provides 1-click action buttons (**Fix All Issues**, **Fix Package Name**, **Link EAS Project**, **Create eas.json**).
 
+> **"Start a build now?"** After **Fix All Issues** finishes, the UI offers to
+> build immediately: pick **AAB** or **APK** and it pre-selects the Build
+> tab's artifact picker, switches over, refreshes the doctor/keystore state
+> (so the one-click gate sees the healthy project), and starts the build
+> automatically. **Not now** leaves you on the Doctor tab.
+
 ![Doctor Tab - Environment Diagnostics & Issues](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/doctor-issues.png)
 
 Once issues are resolved, the status banner switches to **"All environment checks passed! You are ready to build."** with green **PASS** badges across all environment cards.
@@ -156,7 +162,13 @@ npm run build:android:apk     # release APK → android/app/build/outputs/apk/re
 
 After the build finishes, the absolute path + size of the artifact is printed at the very end so you always know where it landed.
 
-Skip the pre-flight in CI: `npx local-expo-build init --no-doctor --no-keystore`.
+> **"Run a build now?"** Once setup completes, `init` (and the bare
+> `local-expo-build` invocation) asks if you want to build right away and
+> lists **AAB** / **APK** — choosing one starts the exact `build android`
+> pipeline with that artifact. Non-interactive / CI shells skip the question
+> automatically; pass `--no-build` to turn it off interactively too.
+
+Skip the pre-flight in CI: `npx local-expo-build init --no-doctor --no-keystore --no-build`.
 
 ### Alternative — runner mode (no scaffold)
 
@@ -174,9 +186,10 @@ local-expo-build                          Bare invocation — runs `init` (the s
                                             wizard) inside an Expo project; prints
                                             usage hints in any other directory.
 
-local-expo-build init [--force] [--no-keystore] [--no-doctor]
+local-expo-build init [--force] [--no-keystore] [--no-doctor] [--no-build]
                                             Scaffold scripts + package.json entries
-                                            (runs `doctor` first by default)
+                                            (runs `doctor` first by default; asks
+                                            "Run a build now?" AAB/APK when done)
 
 local-expo-build doctor                     Env check + interactive auto-fix wizard
                                             (eas init → eas build:configure →

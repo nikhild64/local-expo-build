@@ -67,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of a bare help screen. Also fixes `init` crashing in non-interactive
   shells: a failing doctor pre-flight now aborts with a clear message, and the
   keystore prompt is skipped (with a hint) when stdin isn't a TTY.
+- **One-shot build offers after setup.** Once the setup work is done, both
+  surfaces ask whether you want to build right away with the artifact
+  pre-selected. `init` (and the bare `local-expo-build` invocation) ends with
+  **"Run a build now?"** — AAB or APK picked from a list, then the exact
+  `build android` pipeline runs via a shared command path. In the browser UI,
+  **Fix All Issues** on the Doctor tab is followed by **"Start a build
+  now?"** — choosing an artifact pre-selects the Build tab's picker, refreshes
+  doctor/keystore state so the one-click gate sees the healthy project, and
+  submits the build automatically. Both prompts are skipped in non-interactive
+  shells; `init --no-build` turns the CLI question off.
 
 ### Fixed
 
