@@ -74,7 +74,7 @@ export async function ensureKeystore(
       break;
   }
 
-  ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', 'credentials.json']);
+  ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
 
   // 'eas' provider only opens the EAS credentials menu; it does NOT populate
   // keystore.properties (user must re-run `keystore import`). For 'existing'

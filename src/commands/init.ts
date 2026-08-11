@@ -102,7 +102,7 @@ export function registerInitCommand(program: Command): void {
       }
       if (modified) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 
-      ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', 'credentials.json']);
+      ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
 
       if (opts.keystore !== false) {
         const wantsKs = await confirm({

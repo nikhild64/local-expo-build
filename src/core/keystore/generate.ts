@@ -4,6 +4,7 @@ import { execa } from 'execa';
 import { input, password } from '@inquirer/prompts';
 import { writeKeystoreProps } from '../setupSigning';
 import { writeCredentialsJson } from '../writeCredentialsJson';
+import { ensureGitignoreEntries } from '../../util/gitignore';
 import { log } from '../../util/log';
 
 export interface GenerateKeystoreParams {
@@ -120,6 +121,7 @@ export async function generateKeystore(
     keyAlias,
     keyPassword,
   });
+  ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
   log.ok(`Keystore generated, keystore.properties & credentials.json written.`);
   log.warn(
     `BACK UP ${destPath} AND YOUR PASSWORDS off-machine. Losing them means you cannot ship updates to your app.`
