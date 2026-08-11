@@ -31,7 +31,11 @@ export async function ensureKeystore(
   opts: EnsureKeystoreOpts = {}
 ): Promise<void> {
   const existing = readKeystoreProps(cwd);
-  if (existing) {
+  // When the caller names a provider explicitly (keystore import/create/fetch
+  // commands), proceed even if keystore.properties already exists so users can
+  // replace/switch their keystore. The bare `keystore setup` picker keeps the
+  // fast-path no-op so re-running setup never clobbers a working config.
+  if (existing && !forceProvider) {
     log.ok(`keystore.properties already present (alias=${existing.keyAlias}).`);
     ensureGitignoreEntries(cwd, ['keystore.properties', '*.jks', '*.p12', 'credentials.json']);
     writeCredentialsJson(cwd, existing);
