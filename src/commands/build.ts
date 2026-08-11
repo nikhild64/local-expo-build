@@ -160,6 +160,52 @@ export async function preflightAndroidBuild(
   await applyAndroidPreflightFixes(cwd, analysis, deps.fixers);
 }
 
+/** Options accepted by {@link runBuildAndroid} (commander flags for `build android`). */
+export interface BuildAndroidCliOpts {
+  apk?: boolean;
+  aab?: boolean;
+  profile?: string;
+  clean?: boolean;
+  prebuild?: boolean;
+  bump?: boolean;
+  sync?: boolean;
+  debug?: boolean;
+  maxRam?: string;
+}
+
+/**
+ * The full `build android` flow, shared by the `build android` command and
+ * the init wizard's "run a build now?" follow-up (init picks AAB vs APK via a
+ * list and hands the chosen flags here). cwd/dryRun come from the commander
+ * globals, so the same context works from either entry point.
+ */
+export async function runBuildAndroid(opts: BuildAndroidCliOpts, cmd: Command): Promise<void> {
+  const ctx = getCtx(cmd);
+  await maybePromptScriptUpdate({
+    cwd: ctx.cwd,
+    dryRun: ctx.dryRun,
+    skip: ctx.skipUpdateCheck,
+  });
+
+  await preflightAndroidBuild(ctx.cwd, { dryRun: ctx.dryRun, debug: !!opts.debug });
+
+  const shouldClean = await resolveCleanFlag(opts, ctx);
+  await runAndroidBuild({
+    cwd: ctx.cwd,
+    apk: opts.apk,
+    aab: opts.aab,
+    profile: opts.profile,
+    clean: shouldClean,
+    prebuild: opts.prebuild,
+    bump: opts.bump,
+    sync: opts.sync,
+    dryRun: ctx.dryRun,
+    ensureKeystoreMode: 'interactive',
+    debug: !!opts.debug,
+    maxRam: opts.maxRam,
+  });
+}
+
 export function registerBuildCommand(program: Command): void {
   const build = program.command('build').description('Build commands');
 
@@ -177,30 +223,7 @@ export function registerBuildCommand(program: Command): void {
     .option('--debug', 'build a debug APK with the debug keystore (no EAS, no version bump, no signing setup)')
     .option('--max-ram <ram>', 'Max RAM allocation for Gradle & Node (e.g. 2g, 4g, 8g, 12g, 16g)', 'default')
     .action(async (opts, cmd) => {
-      const ctx = getCtx(cmd);
-      await maybePromptScriptUpdate({
-        cwd: ctx.cwd,
-        dryRun: ctx.dryRun,
-        skip: ctx.skipUpdateCheck,
-      });
-
-      await preflightAndroidBuild(ctx.cwd, { dryRun: ctx.dryRun, debug: !!opts.debug });
-
-      const shouldClean = await resolveCleanFlag(opts, ctx);
-      await runAndroidBuild({
-        cwd: ctx.cwd,
-        apk: opts.apk,
-        aab: opts.aab,
-        profile: opts.profile,
-        clean: shouldClean,
-        prebuild: opts.prebuild,
-        bump: opts.bump,
-        sync: opts.sync,
-        dryRun: ctx.dryRun,
-        ensureKeystoreMode: 'interactive',
-        debug: !!opts.debug,
-        maxRam: opts.maxRam,
-      });
+      await runBuildAndroid(opts, cmd);
     });
 
   // ────────────────────────────────────────────────────────────────────────

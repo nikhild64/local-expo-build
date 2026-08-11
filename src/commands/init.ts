@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import kleur from 'kleur';
 import { Command } from 'commander';
-import { confirm } from '@inquirer/prompts';
+import { confirm, select } from '@inquirer/prompts';
 import { getCtx } from '../util/ctx';
 import { log } from '../util/log';
 import { detectExpoSdk } from '../core/sdkDetect';
@@ -13,6 +13,7 @@ import { detectPackageManager, formatCliCommand, formatRunScript } from '../util
 import { TEMPLATE_SCRIPTS } from '../core/scaffoldScripts';
 import { readKeystoreProps } from '../core/setupSigning';
 import { runDoctor } from './doctor';
+import { runBuildAndroid, BuildAndroidCliOpts } from './build';
 
 const APK_CHAIN = 'node scripts/build.js apk';
 const AAB_CHAIN = 'node scripts/build.js aab';
@@ -26,6 +27,53 @@ export interface InitCommandOpts {
   force?: boolean;
   keystore?: boolean;
   doctor?: boolean;
+  /** `--no-build` skips the "run a build now?" follow-up prompt. */
+  build?: boolean;
+}
+
+/** Injectable pieces for the "run a build now?" follow-up — tests stub them
+ * so the prompts and the build can be driven without a TTY. */
+export interface BuildNowDeps {
+  confirm?: (message: string) => Promise<boolean>;
+  select?: (opts: { message: string; choices: { name: string; value: string }[] }) => Promise<string>;
+  runBuild?: (opts: BuildAndroidCliOpts, cmd: Command) => Promise<void>;
+}
+
+/**
+ * After `init` completes, offers to jump straight into a build: one confirm,
+ * then a list of AAB / APK. Only reached from `runInit` when stdin is a TTY
+ * and `--no-build` was not passed; non-interactive shells get the plain
+ * "Next steps" hints instead.
+ */
+export async function maybePromptBuildNow(cmd: Command, deps: BuildNowDeps = {}): Promise<void> {
+  const ask = deps.confirm || ((message: string) => confirm({ message, default: false }));
+  const choose = deps.select || ((opts) => select(opts));
+  const run = deps.runBuild || runBuildAndroid;
+
+  const go = await ask('Run a build now?');
+  if (!go) return;
+
+  const format = await choose({
+    message: 'Which artifact do you want to build?',
+    choices: [
+      { name: 'AAB (bundleRelease) — upload to the Play Store', value: 'aab' },
+      { name: 'APK (assembleRelease) — sideload / direct install', value: 'apk' },
+    ],
+  });
+  console.log('');
+
+  await run(
+    {
+      apk: format === 'apk',
+      aab: format === 'aab',
+      profile: 'production',
+      prebuild: true,
+      bump: true,
+      sync: true,
+      maxRam: 'default',
+    },
+    cmd
+  );
 }
 
 /**
@@ -34,7 +82,7 @@ export interface InitCommandOpts {
  * keystore setup. Shared by the `init` command and the bare-invocation
  * default (`runDefaultCommand`).
  */
-export async function runInit(opts: InitCommandOpts, cmd: Command): Promise<void> {
+export async function runInit(opts: InitCommandOpts, cmd: Command, deps: BuildNowDeps = {}): Promise<void> {
   const { cwd, dryRun } = getCtx(cmd);
   const cliCmd = formatCliCommand(detectPackageManager(cwd));
   log.step('local-expo-build init');
@@ -144,6 +192,12 @@ export async function runInit(opts: InitCommandOpts, cmd: Command): Promise<void
   log.dim(`  ${formatRunScript(pm, 'build:android:aab')}    # build a release AAB`);
   log.dim(`  ${formatRunScript(pm, 'build:android:apk')}    # build a release APK`);
   log.dim(`  ${cliCmd} doctor  # re-run env checks any time`);
+
+  // Interactive shells only: offer to jump straight into a build, asking
+  // AAB vs APK as a list. Skipped under `--no-build` and in CI / non-TTY.
+  if (opts.build !== false && process.stdin.isTTY) {
+    await maybePromptBuildNow(cmd, deps);
+  }
 }
 
 export function registerInitCommand(program: Command): void {
@@ -153,6 +207,7 @@ export function registerInitCommand(program: Command): void {
     .option('--force', 'overwrite existing scripts/*.js files')
     .option('--no-keystore', 'skip interactive keystore setup')
     .option('--no-doctor', 'skip the pre-flight `doctor` run')
+    .option('--no-build', 'skip the "run a build now?" prompt after setup')
     .action(async (opts, cmd) => {
       await runInit(opts, cmd);
     });

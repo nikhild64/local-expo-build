@@ -15,7 +15,7 @@ const { Command } = require('commander');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { runInit, isExpoProject, runDefaultCommand } = require('../dist/commands/init.js');
+const { runInit, isExpoProject, runDefaultCommand, maybePromptBuildNow } = require('../dist/commands/init.js');
 
 function fakeExpoProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'leb-default-'));
@@ -100,6 +100,117 @@ describe('runInit scaffolds the project (--no-doctor --no-keystore)', () => {
       const buildJs = fs.readFileSync(path.join(dir, 'scripts', 'build.js'), 'utf8');
       await runInit({ doctor: false, keystore: false }, programWithCwd(dir));
       assert.strictEqual(fs.readFileSync(path.join(dir, 'scripts', 'build.js'), 'utf8'), buildJs, 'existing scripts must not be overwritten without --force');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Fakes process.stdin.isTTY for a call, restoring it afterwards. */
+function withTTY(value, fn) {
+  const original = process.stdin.isTTY;
+  process.stdin.isTTY = value;
+  try {
+    return fn();
+  } finally {
+    process.stdin.isTTY = original;
+  }
+}
+
+describe('maybePromptBuildNow (init → build follow-up)', () => {
+  function makeDeps(overrides = {}) {
+    const calls = [];
+    const deps = {
+      confirm: async (message) => {
+        calls.push(['confirm', message]);
+        return overrides.confirmResult ?? true;
+      },
+      select: async (opts) => {
+        calls.push(['select', opts.message]);
+        return overrides.format ?? 'aab';
+      },
+      runBuild: async (opts, cmd) => {
+        calls.push(['runBuild', opts]);
+      },
+      ...overrides,
+    };
+    return { calls, deps };
+  }
+
+  it('declining skips the artifact list and never runs a build', async () => {
+    const { calls, deps } = makeDeps({ confirmResult: false });
+    await maybePromptBuildNow(programWithCwd(os.tmpdir()), deps);
+    assert.strictEqual(calls.length, 1, 'only the confirm prompt should run');
+    assert.strictEqual(calls[0][0], 'confirm');
+  });
+
+  it('choosing AAB runs the build with aab true / apk false', async () => {
+    const { calls, deps } = makeDeps({ format: 'aab' });
+    await maybePromptBuildNow(programWithCwd(os.tmpdir()), deps);
+    const run = calls.find((c) => c[0] === 'runBuild');
+    assert.ok(run, 'the build should run after choosing AAB');
+    assert.strictEqual(run[1].aab, true);
+    assert.strictEqual(run[1].apk, false);
+    assert.strictEqual(run[1].profile, 'production');
+  });
+
+  it('choosing APK runs the build with apk true / aab false', async () => {
+    const { calls, deps } = makeDeps({ format: 'apk' });
+    await maybePromptBuildNow(programWithCwd(os.tmpdir()), deps);
+    const run = calls.find((c) => c[0] === 'runBuild');
+    assert.ok(run, 'the build should run after choosing APK');
+    assert.strictEqual(run[1].apk, true);
+    assert.strictEqual(run[1].aab, false);
+  });
+});
+
+describe('runInit interactive build follow-up', () => {
+  it('prompts to run a build when stdin is a TTY and runs the chosen format', async () => {
+    const dir = fakeExpoProject();
+    const calls = [];
+    const deps = {
+      confirm: async () => true,
+      select: async () => 'apk',
+      runBuild: async (opts) => {
+        calls.push(opts);
+      },
+    };
+    try {
+      await withTTY(true, () => runInit({ doctor: false, keystore: false }, programWithCwd(dir), deps));
+      assert.strictEqual(calls.length, 1, 'the build follow-up should fire once in a TTY');
+      assert.strictEqual(calls[0].apk, true);
+      assert.strictEqual(calls[0].aab, false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the build prompt under --no-build even in a TTY', async () => {
+    const dir = fakeExpoProject();
+    const calls = [];
+    const deps = {
+      confirm: async () => true,
+      select: async () => 'aab',
+      runBuild: async (opts) => {
+        calls.push(opts);
+      },
+    };
+    try {
+      await withTTY(true, () =>
+        runInit({ doctor: false, keystore: false, build: false }, programWithCwd(dir), deps)
+      );
+      assert.strictEqual(calls.length, 0, '--no-build must suppress the follow-up');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the build prompt in a non-TTY shell (no prompt, no hang)', async () => {
+    const dir = fakeExpoProject();
+    try {
+      await withTTY(undefined, () =>
+        runInit({ doctor: false, keystore: false }, programWithCwd(dir))
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
