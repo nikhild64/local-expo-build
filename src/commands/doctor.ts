@@ -46,12 +46,13 @@ function replaceResultByName(results: CheckResult[], name: string, newRow: Check
   else results.push(newRow);
 }
 
-async function which(cmd: string, args: string[] = ['-version']): Promise<string | null> {
+async function which(cmd: string, args: string[] = ['-version'], signal?: AbortSignal): Promise<string | null> {
   try {
     const { stdout, stderr, exitCode } = await execa(cmd, args, {
       reject: false,
       timeout: 1_500,
       stdio: ['ignore', 'pipe', 'pipe'],
+      signal,
     });
     if (exitCode !== 0 && !stdout) return null;
     const line = (stdout || stderr || '').split('\n')[0]?.trim();
@@ -59,12 +60,15 @@ async function which(cmd: string, args: string[] = ['-version']): Promise<string
       return null;
     }
     return line;
-  } catch {
+  } catch (err: any) {
+    // Propagate cancellation so a timed-out doctor check stops promptly
+    // instead of silently degrading into a misleading "not found" row.
+    if (err?.name === 'AbortError' || err?.isCanceled) throw err;
     return null;
   }
 }
 
-async function projectBinVersion(name: string, cwd: string): Promise<string | null> {
+async function projectBinVersion(name: string, cwd: string, signal?: AbortSignal): Promise<string | null> {
   const bin = resolveProjectBin(name, cwd);
   if (!bin) return null;
   const { command, args, execa: execaOpts } = projectBinExecArgs(bin, ['--version']);
@@ -74,10 +78,13 @@ async function projectBinVersion(name: string, cwd: string): Promise<string | nu
       reject: false,
       timeout: 1_500,
       stdio: ['ignore', 'pipe', 'pipe'],
+      signal,
       ...execaOpts,
     });
     return (stdout || stderr || '').split('\n')[0]?.trim() || name;
-  } catch {
+  } catch (err: any) {
+    // Propagate cancellation (see `which` above).
+    if (err?.name === 'AbortError' || err?.isCanceled) throw err;
     return null;
   }
 }
@@ -518,29 +525,43 @@ export async function rehydrateKeystore(cwd: string): Promise<void> {
 }
 
 export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
-  return Promise.race([
-    performDoctorChecks(cwd),
-    new Promise<DoctorCheckSummary>((resolve) =>
-      setTimeout(
-        () =>
-          resolve({
-            results: [
-              { name: 'Node >= 20', ok: true, detail: `v${process.versions.node}` },
-              { name: 'Environment check timeout', ok: true, warn: true, detail: 'Doctor checks completed partially.' },
-            ],
-            capabilities: {
-              canFixAndroidPackage: false,
-              canEasInit: false,
-              canEasConfigure: false,
-              rehydrateAvailable: false,
-              canSetupKeystore: false,
-              easReady: false,
-            },
-          }),
-        8_000
-      )
-    ),
-  ]);
+  // When the 8s safety net fires, abort the in-flight environment probes so
+  // they stop promptly instead of continuing in the background, and return a
+  // clearly-incomplete result rather than a misleadingly-green "partial" row.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    return await Promise.race([
+      performDoctorChecks(cwd, controller.signal),
+      new Promise<DoctorCheckSummary>((resolve) =>
+        controller.signal.addEventListener(
+          'abort',
+          () =>
+            resolve({
+              results: [
+                {
+                  name: 'Doctor checks timed out',
+                  ok: false,
+                  detail:
+                    'Timed out after 8s — the environment could not be fully verified. Click Refresh Doctor to retry.',
+                },
+              ],
+              capabilities: {
+                canFixAndroidPackage: false,
+                canEasInit: false,
+                canEasConfigure: false,
+                rehydrateAvailable: false,
+                canSetupKeystore: false,
+                easReady: false,
+              },
+            }),
+          { once: true }
+        )
+      ),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 let envChecksCache: {
@@ -549,25 +570,26 @@ let envChecksCache: {
 } | null = null;
 
 async function getCachedEnvChecks(
-  cwd: string
+  cwd: string,
+  signal?: AbortSignal
 ): Promise<[string | null, string | null, string | null, string | null, string | null, string | null]> {
   const now = Date.now();
   if (envChecksCache && now - envChecksCache.timestamp < 30_000) {
     return envChecksCache.data;
   }
   const data = await Promise.all([
-    which('java', ['-version']),
-    which('keytool', ['-help']),
-    which('eas', ['--version']),
-    projectBinVersion('expo', cwd),
-    process.platform === 'darwin' ? which('xcodebuild', ['-version']) : Promise.resolve(null),
-    process.platform === 'darwin' ? which('xcrun', ['--version']) : Promise.resolve(null),
+    which('java', ['-version'], signal),
+    which('keytool', ['-help'], signal),
+    which('eas', ['--version'], signal),
+    projectBinVersion('expo', cwd, signal),
+    process.platform === 'darwin' ? which('xcodebuild', ['-version'], signal) : Promise.resolve(null),
+    process.platform === 'darwin' ? which('xcrun', ['--version'], signal) : Promise.resolve(null),
   ]);
   envChecksCache = { timestamp: now, data };
   return data;
 }
 
-async function performDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
+async function performDoctorChecks(cwd: string, signal?: AbortSignal): Promise<DoctorCheckSummary> {
   const results: CheckResult[] = [];
 
   const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
@@ -577,7 +599,7 @@ async function performDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
     detail: `v${process.versions.node}`,
   });
 
-  const [java, keytool, eas, expoBin, xcb, xcrun] = await getCachedEnvChecks(cwd);
+  const [java, keytool, eas, expoBin, xcb, xcrun] = await getCachedEnvChecks(cwd, signal);
 
   results.push({ name: 'JDK (java)', ok: !!java, detail: java || 'not found' });
   results.push({ name: 'keytool', ok: !!keytool, detail: keytool ? 'present' : 'not found' });
