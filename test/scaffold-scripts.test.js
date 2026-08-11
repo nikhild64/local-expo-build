@@ -84,4 +84,39 @@ describe('scaffoldScripts', () => {
     applyScriptUpdates([build]);
     assert.equal(readScriptVersion(path.join(scriptsDir, 'build.js')) !== null, true);
   });
+
+  it('scaffoldProject gitignores keystore secrets including *.p12 (A1)', () => {
+    const cwd = mkTemp('leb-scr-gi-');
+    fs.writeFileSync(
+      path.join(cwd, 'package.json'),
+      JSON.stringify({ name: 'x', version: '1.0.0' }, null, 2)
+    );
+    scaffoldProject(cwd);
+    const gi = fs.readFileSync(path.join(cwd, '.gitignore'), 'utf8');
+    for (const entry of ['keystore.properties', '*.jks', '*.p12', 'credentials.json']) {
+      assert.ok(gi.includes(entry), `.gitignore should contain "${entry}"`);
+    }
+  });
+});
+
+describe('scaffolded template invariants (B7/B8)', () => {
+  it('template build.js passes --non-interactive to expo prebuild (B8)', () => {
+    const tpl = fs.readFileSync(
+      path.join(__dirname, '..', 'templates', 'scripts', 'build.js'),
+      'utf8'
+    );
+    assert.ok(tpl.includes("--non-interactive"), 'prebuild should run non-interactively');
+  });
+
+  it('template sync-eas-version.js checks projectId before reading build.gradle (B7)', () => {
+    const tpl = fs.readFileSync(
+      path.join(__dirname, '..', 'templates', 'scripts', 'sync-eas-version.js'),
+      'utf8'
+    );
+    const projectIdCheck = tpl.indexOf("No projectId — skip EAS sync");
+    const gradleRead = tpl.indexOf("readFileSync(GRADLE");
+    assert.ok(projectIdCheck !== -1, 'projectId guard should be present');
+    assert.ok(gradleRead !== -1, 'gradle read should be present');
+    assert.ok(projectIdCheck < gradleRead, 'projectId guard must run before reading build.gradle');
+  });
 });
