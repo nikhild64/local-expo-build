@@ -93,7 +93,7 @@ preserve the existing flows (no flow redesign).
 1. ✅ **Security:** A1 + A5 (gitignore `*.p12` everywhere; keystore providers call `ensureGitignoreEntries` for both CLI and UI paths).
 2. ✅ **Correctness:** A2 (doctor row key), A3 (iOS bump tolerance), A4 (CLI keystore overwrite), A6 (surface generated password).
 3. ✅ **Hardening batch:** B1–B12 (each committed separately; B13 was a verification note).
-4. ⏳ Regression tests for A1–A6 / B-series still to be written — `npm test` baseline remains 77/77 green.
+4. ✅ Regression tests for A1–A6 / B-series added (`test/bump-version.test.js`, `test/keystore.test.js`, extended `scaffold-scripts.test.js` and `ui-server.test.js`) — suite grew from 77 to 96 tests, all green. Writing them surfaced and fixed one more real bug in the upload route (a flush race + missing response on busboy errors).
 
 ## D. Verification notes
 - Findings verified against current code (exact call sites noted above).
