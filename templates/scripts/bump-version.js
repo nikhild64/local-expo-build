@@ -21,10 +21,15 @@ const appJson = JSON.parse(fs.readFileSync(APP_JSON, 'utf8'));
 const current = appJson.expo.version;
 const parts = current.split('.');
 if (parts.length !== 3) {
-  console.error(`Unexpected version: "${current}"`);
+  console.error(`Unexpected version: "${current}" — expected x.y.z with integer segments (e.g. 1.2.3). Pre-release / build-metadata tags (e.g. 1.0.0-rc.1) are not supported.`);
   process.exit(1);
 }
-parts[2] = String(parseInt(parts[2], 10) + 1);
+const patch = parseInt(parts[2], 10);
+if (!Number.isInteger(patch) || String(patch) !== parts[2]) {
+  console.error(`Unexpected patch segment "${parts[2]}" in app.json version "${current}" — expected a plain integer (no leading zeros, no pre-release tags).`);
+  process.exit(1);
+}
+parts[2] = String(patch + 1);
 const next = parts.join('.');
 appJson.expo.version = next;
 fs.writeFileSync(APP_JSON, JSON.stringify(appJson, null, 2) + '\n');
