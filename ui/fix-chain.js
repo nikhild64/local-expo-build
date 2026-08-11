@@ -84,9 +84,12 @@
     }
 
     // 2. Signing keystore — one call; the rehydrate/EAS/generate decision is
-    // server-side (autoSetup.ts). A locally generated password comes back in
-    // `generatedPassword` for the shown-once copy modal.
+    // server-side (autoSetup.ts). The server returns the shown-once
+    // `generatedPassword` (only for local generation) plus the storeFile /
+    // keyAlias that landed, so the caller never hardcodes the file name.
     let generatedPassword = null;
+    let storeFile = null;
+    let keyAlias = null;
     if (needsKeystore) {
       const { ok, data } = await deps.api('/api/keystore/auto-setup', {
         method: 'POST',
@@ -99,10 +102,14 @@
         );
         return { ready: false };
       }
-      if (data && data.generatedPassword) generatedPassword = data.generatedPassword;
+      if (data) {
+        if (data.generatedPassword) generatedPassword = data.generatedPassword;
+        storeFile = data.storeFile || null;
+        keyAlias = data.keyAlias || null;
+      }
     }
 
-    return { ready: true, generatedPassword };
+    return { ready: true, generatedPassword, storeFile, keyAlias };
   }
 
   return { runFixChain, buildDefaultPackageName, missingPartsLabel };
