@@ -307,6 +307,11 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
         }
 
         if (req.method === 'POST' && pathname === '/api/doctor/rehydrate') {
+          if (activeBuild) {
+            res.writeHead(409);
+            res.end(JSON.stringify({ error: 'Cannot rehydrate the keystore while a build is running.' }));
+            return;
+          }
           await rehydrateKeystore(cwd);
           broadcastSse('keystore-updated', {});
           res.writeHead(200);
@@ -358,6 +363,11 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
         }
 
         if (req.method === 'POST' && pathname === '/api/keystore/setup') {
+          if (activeBuild) {
+            res.writeHead(409);
+            res.end(JSON.stringify({ error: 'Cannot modify the keystore while a build is running.' }));
+            return;
+          }
           const body = await parseJsonBody(req);
           const provider = body.provider;
 
@@ -380,6 +390,11 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
         }
 
         if (req.method === 'POST' && pathname === '/api/keystore/upload') {
+          if (activeBuild) {
+            res.writeHead(409);
+            res.end(JSON.stringify({ error: 'Cannot replace the keystore while a build is running.' }));
+            return;
+          }
           const bb = Busboy({ headers: req.headers, limits: { fileSize: 5 * 1024 * 1024 } });
           let tmpPath = '';
           let keyAlias = '';
