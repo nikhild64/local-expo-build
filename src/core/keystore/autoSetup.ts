@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { readKeystoreProps, KeystoreProps } from '../setupSigning';
 import { writeCredentialsJson } from '../writeCredentialsJson';
 import { ensureGitignoreEntries } from '../../util/gitignore';
@@ -68,6 +70,25 @@ export const GENERATE_DEFAULTS: GenerateKeystoreParams = {
   org: 'LocalExpoBuild',
   country: 'US',
 };
+
+/**
+ * When `keystore.properties` is missing but a keystore file already exists in
+ * the standard location (`android/app/*.jks|*.p12`), return its
+ * project-relative path (e.g. `android/app/release.p12`). The file's password
+ * is unknown — there are no properties and no `credentials.json` to read it
+ * from — so flows must never silently generate over it.
+ */
+export function findUnconfiguredKeystoreFile(cwd: string): string | null {
+  const dir = path.join(cwd, 'android', 'app');
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const hit = entries.find((f) => /\.(jks|p12)$/i.test(f));
+  return hit ? path.relative(cwd, path.join(dir, hit)).replace(/\\/g, '/') : null;
+}
 
 /** Same random-password scheme the UI and doctor's fix-all have always used. */
 function randomPassword(): string {
@@ -152,6 +173,16 @@ export async function autoSetupKeystore(
   }
 
   // 3. Generate locally — the fallback that always works when keytool exists.
+  //    Guard: a keystore file without properties has an unknown password, so
+  //    never silently generate over it — tell the user what to do instead.
+  const unconfigured = findUnconfiguredKeystoreFile(cwd);
+  if (unconfigured) {
+    throw new Error(
+      `Found an existing keystore (${unconfigured}) but keystore.properties is missing, so its password is unknown. ` +
+        `Import it with its password (\`local-expo-build keystore import\`), ` +
+        `or delete the file so a fresh keystore can be generated.`
+    );
+  }
   const auto = await autoGenerateKeystore(cwd, opts.generateParams);
   return {
     provider: 'generate',

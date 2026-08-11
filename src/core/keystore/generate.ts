@@ -71,7 +71,11 @@ export async function generateKeystore(
   const destPath = path.join(destDir, filename);
 
   if (fs.existsSync(destPath)) {
-    throw new Error(`Keystore already exists at ${destPath}. Delete it or choose a new name.`);
+    throw new Error(
+      `Keystore already exists at ${path.relative(cwd, destPath)}. ` +
+        `Delete it to generate a new one, or use \`local-expo-build keystore import\` ` +
+        `if this is the keystore you want to keep.`
+    );
   }
 
   log.info(`Running keytool to generate ${destPath}...`);
