@@ -1121,13 +1121,14 @@
     );
 
     // The generated password is shown once — offer a copy button. The file
-    // name comes from the server's response (shared auto defaults), never a
-    // hardcoded client-side default.
+    // name and alias come from the server's response (exact params used), so
+    // the UI never hardcodes a default.
     if (result.generatedPassword) {
-      const storeFile = result.storeFile || 'release.p12';
+      const storeFile = (result.params && result.params.filename) || result.storeFile;
+      const keyAlias = (result.params && result.params.keyAlias) || result.keyAlias;
       await showModal({
         title: 'Release keystore created',
-        message: `A new release keystore (${storeFile}) was generated for this project. The password is shown once — copy it now; you will need it for Play Store uploads and EAS submit.`,
+        message: `A new release keystore (${storeFile}, alias ${keyAlias}) was generated for this project. The password is shown once — copy it now; you will need it for Play Store uploads and EAS submit.`,
         type: 'success',
         confirmText: 'OK',
         copyValue: result.generatedPassword,
@@ -1812,8 +1813,8 @@
         return showAlert('Could not generate keystore', data.error || 'Keytool generation failed.', 'error');
       }
       const pass = data.generatedPassword;
-      const storeFile = data.storeFile || 'release.p12';
-      const keyAlias = data.keyAlias || 'release';
+      const storeFile = (data.params && data.params.filename) || data.storeFile;
+      const keyAlias = (data.params && data.params.keyAlias) || data.keyAlias;
 
       let easSynced = false;
       let easSyncError = '';

@@ -225,6 +225,10 @@ describe('autoSetupKeystore — local generation', () => {
     assert.strictEqual(seen[0].storePassword, result.generatedPassword);
     assert.strictEqual(seen[0].keyPassword, result.generatedPassword);
     assert.strictEqual(seen[0].org, 'Acme');
+    // The exact params used are returned so UI surfaces need no fallback.
+    assert.deepStrictEqual(result.params, seen[0]);
+    assert.strictEqual(result.params.filename, 'release.p12');
+    assert.strictEqual(result.params.keyAlias, 'release');
     const props = readKeystoreProps(dir);
     assert.strictEqual(props.storePassword, result.generatedPassword);
   });
@@ -254,6 +258,7 @@ describe('autoGenerateKeystore — shared auto defaults', () => {
     assert.strictEqual(seen[0].keyPassword, result.generatedPassword);
     assert.strictEqual(result.storeFile, 'release.p12');
     assert.strictEqual(result.keyAlias, 'release');
+    assert.deepStrictEqual(result.params, seen[0], 'exact params used are returned');
     assert.ok(result.generatedPassword && result.generatedPassword.length === 16);
     const props = readKeystoreProps(dir);
     assert.strictEqual(props.storePassword, result.generatedPassword);
@@ -275,6 +280,9 @@ describe('autoGenerateKeystore — shared auto defaults', () => {
     assert.strictEqual(seen[0].keyAlias, 'custom');
     assert.strictEqual(seen[0].storePassword, result.generatedPassword);
     assert.notStrictEqual(seen[0].storePassword, 'should-not-win');
+    assert.deepStrictEqual(result.params, seen[0], 'exact params used are returned');
+    assert.strictEqual(result.storeFile, 'custom.p12');
+    assert.strictEqual(result.keyAlias, 'custom');
   });
 
   it('rejects when keytool generation fails', async () => {
