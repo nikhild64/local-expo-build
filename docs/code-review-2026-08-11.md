@@ -10,8 +10,8 @@ preserve the existing flows (no flow redesign).
 
 Round 2 (below, section D) covers the remaining un-reviewed areas
 (`src/commands/ui.ts`, `src/server/*`, `src/util/*`) — findings D1–D12 are **filed**.
-D1–D3 (confirmed bugs) are **fixed and committed** with regression tests; D4–D6
-(hardening) and D7–D12 (minor) are still open.
+D1–D6 are **fixed and committed** with regression tests (D1–D3 confirmed bugs,
+D4–D6 hardening); D7–D12 (minor) are still open.
 
 ---
 
@@ -127,7 +127,7 @@ D1–D3 (confirmed bugs) are **fixed and committed** with regression tests; D4�
   best-effort; the cache write must be too.
 - **Fix:** wrap `writeCache()` in try/catch inside `resolveLatestPublishedVersion`.
 
-### D4. 🔶 HARDENING — UI server can crash with unhandled EADDRINUSE
+### D4. ✅ FIXED — UI server can crash with unhandled EADDRINUSE
 - `src/server/server.ts` — `findAvailablePort` probes a net server, then the real
   `http.createServer().listen()` runs with **no `'error'` listener** and the listen
   promise never rejects on failure. Two `ui` instances started together (probe+listen
@@ -136,14 +136,14 @@ D1–D3 (confirmed bugs) are **fixed and committed** with regression tests; D4�
 - **Fix:** add `server.on('error', …)` that rejects the listen promise (and/or retry
   the next port), so a busy port fails cleanly instead of crashing.
 
-### D5. 🔶 HARDENING — Uploaded keystore temp file leaks on client abort
+### D5. ✅ FIXED — Uploaded keystore temp file leaks on client abort
 - `/api/keystore/upload` cleans `tmpPath` on busboy `'error'` and on every `'finish'`
   branch, but **not on premature request close** (client disconnects mid-upload). The
   file stays in `os.tmpdir()` forever.
 - **Fix:** `req.on('close')` → if the upload didn't complete and `tmpPath` exists,
   unlink it.
 
-### D6. 🔶 HARDENING — `--max-ram` clobbers the user's `GRADLE_OPTS` / `NODE_OPTIONS`
+### D6. ✅ FIXED — `--max-ram` clobbers the user's `GRADLE_OPTS` / `NODE_OPTIONS`
 - `src/core/gradleRun.ts` and `src/core/prebuild.ts` — when `maxRam` is set, `env` is
   assigned wholesale (`env.GRADLE_OPTS = …`, `env.NODE_OPTIONS = …`), discarding
   project/user values (e.g. `NODE_OPTIONS=--openssl-legacy-provider` or custom Gradle
