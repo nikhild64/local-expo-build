@@ -88,6 +88,10 @@
   const modalInputField = document.getElementById('modal-input-field');
   const modalInputError = document.getElementById('modal-input-error');
   const modalChoiceContainer = document.getElementById('modal-choice-container');
+  const modalCopyRow = document.getElementById('modal-copy-row');
+  const modalCopyLabel = document.getElementById('modal-copy-label');
+  const modalCopyValue = document.getElementById('modal-copy-value');
+  const modalBtnCopy = document.getElementById('modal-btn-copy');
   const modalBtnCancel = document.getElementById('modal-btn-cancel');
   const modalBtnConfirm = document.getElementById('modal-btn-confirm');
 
@@ -103,6 +107,90 @@
   let currentStatusData = null;
   let currentStageIndex = 1;
   let currentPercentage = 0;
+  let keystoreSubtabUserChosen = false;
+  let lastKeystoreStatus = null;
+
+  // ── Build settings persistence (localStorage) ──
+  const BUILD_SETTINGS_KEY = 'local-expo-build-build-settings-v1';
+
+  function buildSettingsSnapshot() {
+    return {
+      kind: selectedKind,
+      profile: document.getElementById('build-profile')?.value || 'production',
+      ram: document.getElementById('build-ram')?.value || 'default',
+      clean: !!document.getElementById('opt-clean')?.checked,
+      noBump: !!document.getElementById('opt-no-bump')?.checked,
+      noSync: !!document.getElementById('opt-no-sync')?.checked,
+      noPrebuild: !!document.getElementById('opt-no-prebuild')?.checked,
+      debug: !!document.getElementById('opt-debug')?.checked,
+    };
+  }
+
+  function saveBuildSettings() {
+    try {
+      localStorage.setItem(BUILD_SETTINGS_KEY, JSON.stringify(buildSettingsSnapshot()));
+    } catch {
+      // Storage can be unavailable (private mode / blocked storage) — non-fatal.
+    }
+  }
+
+  function loadBuildSettings() {
+    let saved = null;
+    try {
+      const raw = localStorage.getItem(BUILD_SETTINGS_KEY);
+      if (raw) saved = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!saved || typeof saved !== 'object') return;
+
+    if (saved.kind === 'apk' || saved.kind === 'aab') {
+      selectedKind = saved.kind;
+      pillOpts.forEach((b) => b.classList.toggle('active', b.getAttribute('data-val') === saved.kind));
+    }
+    const profile = document.getElementById('build-profile');
+    if (profile && typeof saved.profile === 'string' && saved.profile.trim()) profile.value = saved.profile;
+    const ram = document.getElementById('build-ram');
+    if (ram && typeof saved.ram === 'string') ram.value = saved.ram;
+    [
+      ['opt-clean', saved.clean],
+      ['opt-no-bump', saved.noBump],
+      ['opt-no-sync', saved.noSync],
+      ['opt-no-prebuild', saved.noPrebuild],
+      ['opt-debug', saved.debug],
+    ].forEach(([id, val]) => {
+      const el = document.getElementById(id);
+      if (el && typeof val === 'boolean') el.checked = val;
+    });
+  }
+
+  function setupBuildSettingsPersistence() {
+    const profile = document.getElementById('build-profile');
+    if (profile) {
+      profile.addEventListener('change', saveBuildSettings);
+      profile.addEventListener('input', saveBuildSettings);
+    }
+    ['build-ram', 'opt-clean', 'opt-no-bump', 'opt-no-sync', 'opt-no-prebuild', 'opt-debug'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', saveBuildSettings);
+    });
+  }
+
+  // ── Keystore wizard: smart default sub-tab ──
+  // Picks the most relevant sub-tab from project state, and never overrides
+  // a sub-tab the user clicked manually.
+  function applySmartKeystoreSubtab(data) {
+    if (keystoreSubtabUserChosen || !data) return;
+    let target = null;
+    if (data.rehydrateCandidate) {
+      target = 'ks-rehydrate';
+    } else {
+      const linked = !!(currentStatusData && currentStatusData.easLink && currentStatusData.easLink.kind === 'linked');
+      const authed = !!(easAuth && easAuth.authenticated);
+      target = linked && authed ? 'ks-eas' : 'ks-upload';
+    }
+    switchSubtab(target);
+  }
 
   // ── Custom Modal Dialog Manager ──
   function showModal({
@@ -116,12 +204,33 @@
     cancelText = 'Cancel',
     showCancel = false,
     validate = null,
+    copyValue = '',
+    copyLabel = '',
   }) {
     return new Promise((resolve) => {
       modalTitle.textContent = title;
       modalMessage.textContent = message;
       modalChoiceContainer.style.display = 'none';
       modalChoiceContainer.innerHTML = '';
+
+      // Copy row for values shown once (generated keystore passwords, tokens, ...)
+      if (copyValue) {
+        modalCopyRow.style.display = 'flex';
+        modalCopyValue.textContent = copyValue;
+        modalCopyValue.title = 'Click Copy to save this value';
+        if (copyLabel) {
+          modalCopyLabel.textContent = copyLabel;
+          modalCopyLabel.style.display = 'inline-block';
+        } else {
+          modalCopyLabel.textContent = '';
+          modalCopyLabel.style.display = 'none';
+        }
+        modalBtnCopy.textContent = 'Copy';
+        modalBtnCopy.disabled = false;
+        modalBtnCopy.onclick = () => copyTextToClipboard(copyValue, modalBtnCopy);
+      } else {
+        modalCopyRow.style.display = 'none';
+      }
 
       // Icon badge
       modalIconBadge.className = `modal-icon-badge ${type}`;
@@ -224,6 +333,7 @@
       modalIconBadge.className = 'modal-icon-badge info';
       modalIconBadge.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
       modalInputContainer.style.display = 'none';
+      modalCopyRow.style.display = 'none';
       modalChoiceContainer.innerHTML = '';
       modalChoiceContainer.style.display = 'flex';
       modalChoiceContainer.style.flexDirection = 'column';
@@ -297,11 +407,51 @@
     });
   }
 
+  async function copyTextToClipboard(text, btn) {
+    let copied = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    if (!copied) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { copied = document.execCommand('copy'); } catch { copied = false; }
+      document.body.removeChild(ta);
+    }
+    if (btn) {
+      const original = btn.textContent;
+      btn.textContent = copied ? 'Copied ✓' : 'Press Ctrl+C';
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    }
+  }
+
+  function switchSubtab(target) {
+    if (!target) return;
+    subtabBtns.forEach((b) => {
+      b.classList.toggle('active', b.getAttribute('data-subtab') === target);
+    });
+    subpanels.forEach((p) => {
+      p.classList.toggle('active', p.id === `subpanel-${target}`);
+    });
+  }
+
   // ── Initialization ──
   function init() {
     setupTabNavigation();
     setupPillSelector();
     setupBuildForm();
+    loadBuildSettings();
+    setupBuildSettingsPersistence();
     setupDoctorTab();
     setupKeystoreTab();
     setupScaffoldTab();
@@ -338,11 +488,8 @@
 
     subtabBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
-        const targetSub = btn.getAttribute('data-subtab');
-        subtabBtns.forEach((b) => b.classList.remove('active'));
-        subpanels.forEach((p) => p.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById(`subpanel-${targetSub}`).classList.add('active');
+        keystoreSubtabUserChosen = true;
+        switchSubtab(btn.getAttribute('data-subtab'));
       });
     });
   }
@@ -355,6 +502,7 @@
         pillOpts.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         selectedKind = btn.getAttribute('data-val');
+        saveBuildSettings();
       });
     });
   }
@@ -386,6 +534,8 @@
       } else {
         dryRunBadge.style.display = 'none';
       }
+
+      applySmartKeystoreSubtab(lastKeystoreStatus);
 
       if (data.buildStatus === 'building') {
         setBuildingState(true);
@@ -822,6 +972,7 @@
     try {
       const caps = lastDoctorSummary?.capabilities || {};
       const fixesApplied = [];
+      let generatedKeystorePass = null;
 
       // 1. Fix Package Name if invalid or missing
       if (caps.canFixAndroidPackage) {
@@ -887,6 +1038,7 @@
 
         if (!easFetched) {
           const pass = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(36)).join('').slice(0, 16);
+          generatedKeystorePass = pass;
           const res = await apiRequest('/api/keystore/setup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -916,13 +1068,16 @@
         }
       }
 
-      await showAlert(
-        'Quick Fix Complete!',
-        fixesApplied.length
+      await showModal({
+        title: 'Quick Fix Complete!',
+        message: fixesApplied.length
           ? `Successfully applied the following fixes:\n\n• ` + fixesApplied.join('\n• ')
           : 'Environment checks updated.',
-        'success'
-      );
+        type: 'success',
+        confirmText: 'OK',
+        copyValue: generatedKeystorePass || '',
+        copyLabel: generatedKeystorePass ? 'Generated keystore password (shown once — copy it):' : '',
+      });
 
       fetchDoctor(true);
       fetchKeystoreStatus();
@@ -1419,10 +1574,12 @@
       const { res, data } = await apiRequest('/api/eas/auth', {}, false);
       easAuth = res.ok ? data : { authenticated: false, source: 'none' };
       renderEasAuth();
+      applySmartKeystoreSubtab(lastKeystoreStatus);
       if (easAuth.authenticated) fetchEasKeystores();
     } catch {
       easAuth = { authenticated: false, source: 'none' };
       renderEasAuth();
+      applySmartKeystoreSubtab(lastKeystoreStatus);
     }
   }
 
@@ -1619,16 +1776,20 @@
         ? '✓ Uploaded & Synced directly to Expo EAS Cloud!'
         : `(Saved locally & to credentials.json. Note for EAS: ${easSyncError})`;
 
-      await showAlert(
-        'Keystore Created & Configured!',
-        `Generated a new release keystore (release.p12) with alias "release".\n\n` +
+      await showModal({
+        title: 'Keystore Created & Configured!',
+        message:
+          `Generated a new release keystore (release.p12) with alias "release".\n\n` +
           `• Saved locally to android/app/release.p12\n` +
           `• Configured in keystore.properties\n` +
           `• Synced with credentials.json\n` +
           `• 🔑 Generated password (shown once — SAVE IT NOW): ${pass}\n` +
           `• ${syncMsg}`,
-        'success'
-      );
+        type: 'success',
+        confirmText: 'OK',
+        copyValue: pass,
+        copyLabel: 'Generated password (copy before closing):',
+      });
       fetchKeystoreStatus();
       fetchDoctor();
       fetchEasKeystores();
@@ -1682,6 +1843,8 @@
       const res = await fetch('/api/keystore/status');
       if (!res.ok) return;
       const data = await res.json();
+      lastKeystoreStatus = data;
+      applySmartKeystoreSubtab(data);
 
       if (data.configured && data.props) {
         keystoreStatusContent.innerHTML = `
