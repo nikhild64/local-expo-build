@@ -232,6 +232,21 @@ describe('UI HTTP Server REST endpoints', () => {
     assert.strictEqual(data.configured, false);
   });
 
+  it('serves GET /api/keystore/defaults with the shared generate defaults', async () => {
+    const res = await fetch(`${serverInstance.url}/api/keystore/defaults`);
+    assert.strictEqual(res.status, 200);
+    const data = await res.json();
+    assert.strictEqual(data.success, true);
+    assert.strictEqual(data.defaults.filename, 'release.p12');
+    assert.strictEqual(data.defaults.keyAlias, 'release');
+    assert.strictEqual(data.defaults.cn, 'Release Signer');
+    assert.strictEqual(data.defaults.org, 'LocalExpoBuild');
+    assert.strictEqual(data.defaults.country, 'US');
+    // The defaults payload must never carry passwords.
+    assert.ok(!('storePassword' in data.defaults));
+    assert.ok(!('keyPassword' in data.defaults));
+  });
+
   it('redacts keystore passwords from status endpoints (B3)', async () => {
     // Configure a keystore so the endpoints have props to expose.
     fs.mkdirSync(path.join(dir, 'android', 'app'), { recursive: true });
