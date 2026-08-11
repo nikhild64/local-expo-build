@@ -406,8 +406,8 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           bb.on('file', (fieldname, file, info) => {
             const { filename } = info;
             const ext = path.extname(filename).toLowerCase();
-            if (ext !== '.jks' && ext !== '.keystore') {
-              uploadError = 'Invalid file extension. Only .jks and .keystore files are accepted.';
+            if (ext !== '.jks' && ext !== '.keystore' && ext !== '.p12') {
+              uploadError = 'Invalid file extension. Only .jks, .keystore, and .p12 files are accepted.';
               file.resume();
               return;
             }
