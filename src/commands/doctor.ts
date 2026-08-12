@@ -688,7 +688,37 @@ async function getCachedEnvChecks(
   return data;
 }
 
-async function performDoctorChecks(cwd: string, signal?: AbortSignal): Promise<DoctorCheckSummary> {
+/**
+ * Everything `runDoctor` (CLI) and `performDoctorChecks` (browser UI) need
+ * from a single doctor pass: the rendered check rows plus the intermediate
+ * objects the interactive wizard / capabilities derive from them. Keeping the
+ * check list in one place means the CLI and the UI can never drift apart in
+ * which checks exist or how they're worded.
+ */
+interface DoctorChecksContext {
+  results: CheckResult[];
+  androidPkg: AndroidPackageCheck;
+  easLink: EasLinkResult;
+  ksProps: KeystorePropsCheck;
+  jksResult: CheckResult;
+  credResult: CredentialsJsonCheck;
+  /** eas-cli `--version` output line (null when missing) — drives wizard offers. */
+  eas: string | null;
+  scaffoldedCount: number;
+  outdatedScriptsCount: number;
+  /** Bundled template version of the scaffolded scripts (for update hints). */
+  latestScriptVersion: string;
+}
+
+/**
+ * The single doctor check implementation, shared by the CLI (`runDoctor`) and
+ * the browser UI (`performDoctorChecks`). `signal` aborts the in-flight
+ * environment probes (the UI's 8s safety net); the CLI passes none.
+ */
+async function collectDoctorChecksContext(
+  cwd: string,
+  signal?: AbortSignal
+): Promise<DoctorChecksContext> {
   const results: CheckResult[] = [];
 
   const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
@@ -803,21 +833,43 @@ async function performDoctorChecks(cwd: string, signal?: AbortSignal): Promise<D
     });
   }
 
-  const canFixAndroidPackage =
-    androidPkg.source === 'app.json' && (androidPkg.pkg === null || !ANDROID_PKG_RE.test(androidPkg.pkg));
-  // The browser UI uses Expo's GraphQL API directly, so its EAS actions do not
-  // require the optional eas-cli executable to be installed.
-  const canEasInit = easLink.kind !== 'linked' && easLink.kind !== 'no-expo-config';
-  const canEasConfigure = easLink.kind !== 'no-expo-config' && !easLink.hasEasJson;
-  const canSyncCredentialsJson = ksProps.fileExists && (!credResult.exists || !credResult.valid);
-  const rehydrateAvailable =
-    (!ksProps.fileExists || !ksProps.props || canSyncCredentialsJson) &&
-    (!!findRehydrateCandidate(cwd) || canSyncCredentialsJson);
-  const canSetupKeystore = !ksProps.fileExists || !ksProps.props;
-  const easReady = isEasReady(easLink);
-
   return {
     results,
+    androidPkg,
+    easLink,
+    ksProps,
+    jksResult,
+    credResult,
+    eas,
+    scaffoldedCount: scaffolded.length,
+    outdatedScriptsCount: outdatedScripts.length,
+    latestScriptVersion: scriptStatuses[0]?.templateVersion || '?',
+  };
+}
+
+/**
+ * UI entry point: collects the checks and derives the one-click fix
+ * capabilities. Wrapped by {@link collectDoctorChecks} in an 8s safety net.
+ */
+async function performDoctorChecks(cwd: string, signal?: AbortSignal): Promise<DoctorCheckSummary> {
+  const ctx = await collectDoctorChecksContext(cwd, signal);
+
+  const canFixAndroidPackage =
+    ctx.androidPkg.source === 'app.json' &&
+    (ctx.androidPkg.pkg === null || !ANDROID_PKG_RE.test(ctx.androidPkg.pkg));
+  // The browser UI uses Expo's GraphQL API directly, so its EAS actions do not
+  // require the optional eas-cli executable to be installed.
+  const canEasInit = ctx.easLink.kind !== 'linked' && ctx.easLink.kind !== 'no-expo-config';
+  const canEasConfigure = ctx.easLink.kind !== 'no-expo-config' && !ctx.easLink.hasEasJson;
+  const canSyncCredentialsJson = ctx.ksProps.fileExists && (!ctx.credResult.exists || !ctx.credResult.valid);
+  const rehydrateAvailable =
+    (!ctx.ksProps.fileExists || !ctx.ksProps.props || canSyncCredentialsJson) &&
+    (!!findRehydrateCandidate(cwd) || canSyncCredentialsJson);
+  const canSetupKeystore = !ctx.ksProps.fileExists || !ctx.ksProps.props;
+  const easReady = isEasReady(ctx.easLink);
+
+  return {
+    results: ctx.results,
     capabilities: {
       canFixAndroidPackage,
       canEasInit,
@@ -857,126 +909,18 @@ export async function runDoctor({
 }: RunDoctorOpts): Promise<RunDoctorResult> {
   log.step(title || 'local-expo-build doctor');
 
-  const results: CheckResult[] = [];
-
-  const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
-  results.push({
-    name: 'Node >= 20',
-    ok: nodeMajor >= 20,
-    detail: `v${process.versions.node}`,
-  });
-
-  const java = await which('java', ['-version']);
-  results.push({ name: 'JDK (java)', ok: !!java, detail: java || 'not found' });
-
-  const keytool = await which('keytool', ['-help']);
-  results.push({ name: 'keytool', ok: !!keytool, detail: keytool ? 'present' : 'not found' });
-
-  const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
-  results.push({
-    name: 'ANDROID_HOME / ANDROID_SDK_ROOT',
-    ok: !!androidHome,
-    detail: androidHome || 'not set',
-  });
-
-  if (androidHome) {
-    const sdkmanager = path.join(
-      androidHome,
-      'cmdline-tools',
-      'latest',
-      'bin',
-      process.platform === 'win32' ? 'sdkmanager.bat' : 'sdkmanager'
-    );
-    results.push({
-      name: 'sdkmanager',
-      ok: fs.existsSync(sdkmanager),
-      detail: sdkmanager,
-      warn: !fs.existsSync(sdkmanager),
-    });
-  }
-
-  const eas = await which('eas', ['--version']);
-  results.push({
-    name: 'eas-cli',
-    ok: !!eas,
-    detail: eas || 'not found (optional; needed for EAS sync)',
-    warn: !eas,
-  });
-
-  // iOS prerequisites — only meaningful on macOS. On other platforms we
-  // show a single dim "skipped (not macOS)" row instead of failing.
-  if (process.platform === 'darwin') {
-    const xcb = await which('xcodebuild', ['-version']);
-    results.push({
-      name: 'xcodebuild (iOS, optional)',
-      ok: !!xcb,
-      detail: xcb || 'not found (install Xcode from the App Store)',
-      warn: !xcb,
-    });
-    const xcrun = await which('xcrun', ['--version']);
-    results.push({
-      name: 'xcrun (iOS, optional)',
-      ok: !!xcrun,
-      detail: xcrun || 'not found (ships with Xcode Command Line Tools)',
-      warn: !xcrun,
-    });
-  } else {
-    results.push({
-      name: 'iOS build prerequisites',
-      ok: true,
-      warn: true,
-      detail: `skipped — iOS builds require macOS (you're on ${process.platform})`,
-    });
-  }
-
-  const expoBin = await projectBinVersion('expo', cwd);
-  results.push({
-    name: 'expo CLI (in project)',
-    ok: !!expoBin,
-    detail: expoBin || 'not found — run `npm install` / `bun install` in your project',
-  });
-
-  try {
-    const sdk = detectExpoSdk(cwd);
-    const supported = sdk.major in GRADLE_PIN;
-    results.push({
-      name: `Expo SDK detected`,
-      ok: true,
-      detail: `${sdk.major} (${sdk.raw})${supported ? '' : ' — not in GRADLE_PIN table'}`,
-      warn: !supported,
-    });
-  } catch (err: any) {
-    results.push({ name: 'Expo SDK detected', ok: false, detail: err?.message || String(err) });
-  }
-
-  const androidPkg = androidPackageCheck(cwd);
-  results.push(androidPkg.result);
-
-  const easLink = detectEasLink(cwd);
-  results.push(easLinkCheck(easLink));
-
-  const ksProps = keystorePropsCheck(cwd);
-  results.push(ksProps.result);
-  const jksResult = jksCheck(cwd, ksProps.props);
-  results.push(jksResult);
-  const credResult = credentialsJsonCheck(cwd, ksProps.props, easLink);
-  results.push(credResult.result);
-
-  const scriptStatuses = compareScripts(cwd);
-  const scaffolded = scriptStatuses.filter((s) => s.exists);
-  const outdatedScripts = scaffolded.filter((s) => s.contentDiffers);
-  if (scaffolded.length) {
-    const latest = scriptStatuses[0]?.templateVersion || '?';
-    results.push({
-      name: 'Scaffolded scripts',
-      ok: outdatedScripts.length === 0,
-      warn: outdatedScripts.length > 0,
-      detail:
-        outdatedScripts.length === 0
-          ? `up to date (v${scaffolded[0]?.userVersion || latest})`
-          : `${outdatedScripts.length} outdated — bundled v${latest}`,
-    });
-  }
+  // Shared with the browser UI (collectDoctorChecks) so the CLI and the UI
+  // can never drift on which checks exist or how they're worded.
+  const {
+    results,
+    androidPkg,
+    easLink,
+    ksProps,
+    jksResult,
+    credResult,
+    eas,
+    outdatedScriptsCount,
+  } = await collectDoctorChecksContext(cwd);
 
   console.log('');
   for (const r of results) {
@@ -1000,7 +944,7 @@ export async function runDoctor({
     console.log('');
   }
 
-  if (outdatedScripts.length) {
+  if (outdatedScriptsCount) {
     console.log(kleur.bold('Scaffolded script updates:'));
     console.log(
       `  ${kleur.cyan('1.')} Refresh scripts: ${cliCmd} update-scripts`

@@ -1,5 +1,7 @@
+import path from 'path';
 import { Command } from 'commander';
 import kleur from 'kleur';
+import { log, setVerbose } from './util/log';
 import { registerBuildCommand } from './commands/build';
 import { registerInitCommand } from './commands/init';
 import { registerKeystoreCommand } from './commands/keystore';
@@ -61,6 +63,11 @@ program.hook('preAction', async (thisCommand, actionCommand) => {
   }
 
   const opts = thisCommand.optsWithGlobals();
+  // Turn the global --verbose flag on before any command logic logs, so the
+  // update-check hook and every action see the same setting.
+  setVerbose(Boolean(opts.verbose));
+  log.debug(`argv: ${process.argv.join(' ')}`);
+  log.debug(`cwd: ${path.resolve(opts.cwd || process.cwd())}`);
   await maybePromptCliUpdate({
     currentVersion: pkg.version,
     cwd: opts.cwd || process.cwd(),

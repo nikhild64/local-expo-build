@@ -681,6 +681,7 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
                   warn: (msg) => { broadcastSse('log', { line: `[WARN] ${msg}` }); serverLog(`WARN: ${msg}`); },
                   dim: (msg) => { broadcastSse('log', { line: `[DIM] ${msg}` }); serverLog(msg); },
                   error: (msg) => { broadcastSse('log', { line: `[ERR] ${msg}` }); serverLog(`ERROR: ${msg}`); },
+                  debug: (msg) => { broadcastSse('log', { line: `[DEBUG] ${msg}` }); serverLog(`DEBUG: ${msg}`); },
                 },
               });
               broadcastSse('build-complete', { success: true, artifact: result.artifact, kind: result.kind });

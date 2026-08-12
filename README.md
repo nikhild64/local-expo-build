@@ -229,7 +229,7 @@ local-expo-build update-scripts [-y|--yes]
                                             version bundled with this CLI.
 ```
 
-Global flags: `--cwd <path>`, `--verbose`, `--dry-run`, `--no-update-check`, `--yes-update`.
+Global flags: `--cwd <path>`, `--verbose` (extra debug logging), `--dry-run`, `--no-update-check`, `--yes-update`.
 
 > **Auto-fix pre-flight.** In an interactive terminal, `local-expo-build build
 > android` checks the two file-based prerequisites (Android package + release

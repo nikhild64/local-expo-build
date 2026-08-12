@@ -11,7 +11,13 @@ export const MAX_RAM_MB = 64 * 1024; // 64g cap
 export function parseRamMb(maxRam?: string): number | null {
   if (!maxRam || maxRam === 'default') return null;
   const match = maxRam.toLowerCase().match(/^(\d+)(g|m)?$/);
-  if (!match) return null;
+  if (!match) {
+    // Never silently ignore a user-supplied value: a typo like `--max-ram 2x`
+    // should fail loudly instead of quietly running with the default heap.
+    throw new Error(
+      `Invalid --max-ram "${maxRam}": expected a size like 2g, 4096m, 8g, or 16g (a plain number means gigabytes).`
+    );
+  }
   const num = parseInt(match[1], 10);
   const unit = match[2] || 'g';
   const mb = unit === 'm' ? num : num * 1024;

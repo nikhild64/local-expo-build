@@ -47,9 +47,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "npm run build && node --test test/",
-    "test:only": "node --test test/",
-    "prepublishOnly": "npm run build && node --test test/",
+    "test": "npm run build && node --test",
+    "test:only": "node --test",
+    "prepublishOnly": "npm run build && node --test",
     "start": "node bin/local-expo-build.js"
   },
   "engines": {

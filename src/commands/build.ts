@@ -314,7 +314,7 @@ export function registerBuildCommand(program: Command): void {
           // android/app/build.gradle versionCode). For iOS, the buildNumber
           // lives in Info.plist (CFBundleVersion) and is updated by Expo's
           // prebuild from app.json. We only bump app.json here.
-          bumpVersion({ cwd: ctx.cwd, profile: 'production' });
+          await bumpVersion({ cwd: ctx.cwd, profile: 'production' });
         }
       } else {
         log.dim('Skipping version bump (--no-bump)');

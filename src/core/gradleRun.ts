@@ -29,8 +29,11 @@ export async function gradleRun({ cwd, task, maxRam, onLine, signal }: GradleRun
     env.GRADLE_OPTS = gradleOptsWithRam(ramMb, env.GRADLE_OPTS);
     env.NODE_OPTIONS = nodeOptionsWithRam(ramMb, env.NODE_OPTIONS);
     log.info(`[RAM] Gradle JVM allocated -Xmx${ramMb}m | Node heap: ${ramMb}MB`);
+    log.debug(`GRADLE_OPTS: ${env.GRADLE_OPTS}`);
+    log.debug(`NODE_OPTIONS: ${env.NODE_OPTIONS}`);
   }
 
+  log.debug(`wrapper: ${wrapper} (shell=${isWin})`);
   log.info(`gradle ${task} (cwd: ${androidDir})`);
   if (onLine) {
     const proc = execa(wrapper, [task], {

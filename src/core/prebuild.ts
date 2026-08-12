@@ -58,6 +58,8 @@ export async function prebuild({ cwd, clean = false, maxRam, onLine, signal }: P
     // Append to any pre-existing NODE_OPTIONS instead of clobbering it (D6).
     env.NODE_OPTIONS = nodeOptionsWithRam(ramMb, env.NODE_OPTIONS);
   }
+  log.debug(`resolved expo bin: ${command} ${execArgs.join(' ')}`);
+  if (ramMb) log.debug(`prebuild NODE_OPTIONS: ${env.NODE_OPTIONS}`);
 
   if (onLine) {
     const proc = execa(command, execArgs, { cwd, env, stdio: ['inherit', 'pipe', 'pipe'], cancelSignal: signal, ...execaOpts });

@@ -26,9 +26,11 @@ describe('parseRamMb utility', () => {
     assert.strictEqual(parseRamMb('8'), 8192);
   });
 
-  it('returns null for invalid inputs', () => {
-    assert.strictEqual(parseRamMb('invalid'), null);
-    assert.strictEqual(parseRamMb('abc'), null);
+  it('throws on garbage input so a typo is never silently ignored (D7)', () => {
+    assert.throws(() => parseRamMb('invalid'), /Invalid --max-ram/);
+    assert.throws(() => parseRamMb('abc'), /Invalid --max-ram/);
+    assert.throws(() => parseRamMb('2x'), /Invalid --max-ram/);
+    assert.throws(() => parseRamMb('8 g'), /Invalid --max-ram/);
   });
 
   it('throws on zero so it is never silently ignored (D7)', () => {

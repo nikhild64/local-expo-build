@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execaSync } from 'execa';
 import { log } from '../util/log';
 import { detectPackageManager, formatCliCommand } from '../util/resolveProjectBin';
 import { writeCredentialsJson } from './writeCredentialsJson';
@@ -326,6 +327,38 @@ export function wireReleaseBuildType(gradle: string): { gradle: string; changed:
 }
 
 /**
+ * `android/app/build.gradle` now contains the plaintext keystore passwords
+ * (storePassword / keyPassword in the injected release signingConfig). If the
+ * file is not gitignored, those passwords get committed in CNG setups that
+ * commit android/. `git check-ignore` is the authoritative answer — hand-rolled
+ * .gitignore parsing would miss nested files, negation patterns, and
+ * directory-only rules. Silent no-op when git is missing or the project isn't
+ * a repository (nothing can be committed anyway).
+ */
+function warnIfGradleLeaksSecrets(cwd: string, gradlePath: string): void {
+  try {
+    const { exitCode } = execaSync(
+      'git',
+      ['check-ignore', '--quiet', '--', path.relative(cwd, gradlePath).replace(/\\/g, '/')],
+      { cwd, reject: false, timeout: 3_000, stdio: ['ignore', 'ignore', 'ignore'] }
+    );
+    // exit 0 = ignored (safe); exit 1 = not ignored (would be committed);
+    // anything else (e.g. 128) = not a git repo, skip.
+    if (exitCode === 1) {
+      const rel = path.relative(cwd, gradlePath).replace(/\\/g, '/');
+      log.warn(
+        `${rel} contains your plaintext keystore passwords and is NOT gitignored — ` +
+          `if you commit the android/ directory (CNG), your signing passwords will be committed. ` +
+          `Add ${rel} to .gitignore, or read the passwords from keystore.properties at build time ` +
+          `instead of injecting them into build.gradle.`
+      );
+    }
+  } catch {
+    // git missing / not a repo — skip.
+  }
+}
+
+/**
  * Injects the release signingConfig into android/app/build.gradle.
  * Idempotent: if `signingConfigs.release` is already present, it's a no-op.
  */
@@ -347,6 +380,7 @@ export function setupSigning({ cwd }: SetupSigningOpts): void {
   let gradle = fs.readFileSync(gradlePath, 'utf8');
   if (gradle.includes('signingConfigs.release')) {
     log.ok('Release signing config already present — skipping.');
+    warnIfGradleLeaksSecrets(cwd, gradlePath);
     return;
   }
 
@@ -377,4 +411,5 @@ export function setupSigning({ cwd }: SetupSigningOpts): void {
 
   fs.writeFileSync(gradlePath, gradle, 'utf8');
   log.ok(`Release signing config injected (alias=${props.keyAlias})`);
+  warnIfGradleLeaksSecrets(cwd, gradlePath);
 }

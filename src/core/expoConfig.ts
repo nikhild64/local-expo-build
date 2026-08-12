@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execaSync } from 'execa';
+import { log } from '../util/log';
 import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
 
 /**
@@ -40,6 +41,7 @@ export function readExpoConfig(cwd: string): ExpoConfigResult | null {
       if (inner && typeof inner === 'object') {
         const result: ExpoConfigResult = { config: inner, source: 'app.json' };
         cache.set(cwd, result);
+        log.debug(`Expo config: read ${path.relative(cwd, appJsonPath) || 'app.json'} (static)`);
         return result;
       }
     } catch {
@@ -57,6 +59,7 @@ export function readExpoConfig(cwd: string): ExpoConfigResult | null {
     const fromDynamic = readDynamicConfig(cwd);
     if (fromDynamic) {
       cache.set(cwd, fromDynamic);
+      log.debug('Expo config: resolved dynamic app.config.* via expo CLI');
       return fromDynamic;
     }
   }

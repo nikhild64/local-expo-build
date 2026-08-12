@@ -16,6 +16,8 @@ export interface Logger {
   warn: (msg: string) => void;
   dim: (msg: string) => void;
   error?: (msg: string) => void;
+  /** Only surfaced when verbose logging is enabled. */
+  debug?: (msg: string) => void;
 }
 
 export interface AndroidBuildOpts {
@@ -57,6 +59,10 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
   const dryRun = !!opts.dryRun;
   const ensureMode = opts.ensureKeystoreMode || 'interactive';
 
+  logger.debug?.(
+    `opts: task=${task} profile=${profile} clean=${opts.clean} prebuild=${opts.prebuild} bump=${opts.bump} sync=${opts.sync} debug=${debug} dryRun=${dryRun} ensureMode=${ensureMode} maxRam=${opts.maxRam}`
+  );
+
   logger.step(`local-expo-build android (${kind})`);
   logger.dim('Local build · runs on your machine · saves an EAS cloud build credit');
   logger.dim(`cwd: ${opts.cwd}`);
@@ -95,7 +101,7 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
     if (dryRun) {
       logger.dim(`[dry-run] would fetch next versionCode from EAS (profile=${profile}) and write app.json + build.gradle`);
     } else {
-      bumpVersion({ cwd: opts.cwd, profile });
+      await bumpVersion({ cwd: opts.cwd, profile });
     }
   } else {
     logger.dim('Skipping version bump (--no-bump)');
