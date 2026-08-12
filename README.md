@@ -1,658 +1,382 @@
 # local-expo-build
 
-> One-stop CLI for **local** Expo Android APK / AAB builds — **works on Windows, macOS, and Linux** (unlike `eas build --local`, which rejects Windows). Own your signing, skip the EAS cloud queue, no eas.json required.
+> Build signed Expo Android apps on your own machine. Windows, macOS, and Linux supported.
 
 [![npm version](https://img.shields.io/npm/v/local-expo-build.svg)](https://www.npmjs.com/package/local-expo-build)
 [![npm downloads](https://img.shields.io/npm/dm/local-expo-build.svg)](https://www.npmjs.com/package/local-expo-build)
-[![license](https://img.shields.io/npm/l/local-expo-build.svg)](https://github.com/nikhild64/local-expo-build/blob/main/LICENSE)
-[![node](https://img.shields.io/node/v/local-expo-build.svg)](https://nodejs.org/)
+[![license](https://img.shields.io/npm/l/local-expo-build.svg)](LICENSE)
+[![Node.js](https://img.shields.io/node/v/local-expo-build.svg)](https://nodejs.org/)
 
-`local-expo-build` automates the painful parts of running `expo prebuild` + `gradlew bundleRelease` (or `xcodebuild archive`) yourself:
+local-expo-build turns an Expo project into a signed Android APK or AAB without waiting for an EAS cloud build. It handles Expo prebuild, Gradle compatibility, versioning, release signing, and artifact discovery in one repeatable workflow.
 
-**Android (stable):**
+Android is stable. Local iOS IPA builds are experimental and require macOS.
 
-- Detects your Expo SDK and pins the Gradle wrapper to a version that actually works (e.g. SDK 55 → Gradle 8.13, working around the `expo-manifests` `components.release` bug).
-- Bumps your app version and pulls the next `versionCode` from EAS so Play Store ingest doesn't reject the upload.
-- Injects a release `signingConfig` into the generated `android/app/build.gradle` from a `keystore.properties` you control.
-- Scaffolds `credentials.json` from the same source so EAS submit / cloud builds can reuse your local JKS.
-- Restores your `.jks` into `android/app/` if `expo prebuild --clean` wipes it (no more `validateSigningRelease > Keystore file not found`).
-- Runs `gradlew assembleRelease` / `bundleRelease` and prints the absolute path + size of the produced artifact.
-- Pushes the new `versionCode` back to EAS via GraphQL so `eas build` / `eas submit` stay in sync.
+## Why use it?
 
-**iOS (experimental, macOS only — community-tested):**
+- Build locally on Windows, macOS, or Linux.
+- Produce a signed AAB for Google Play or a signed APK for direct installation.
+- Keep control of your keystore and build scripts.
+- Use EAS when you want it, without requiring an EAS cloud build for the local pipeline.
+- Run the same workflow from a terminal, a local browser UI, or scripts committed to your project.
 
-- Orchestrates `xcodebuild archive` + `-exportArchive` for `.ipa` output.
-- Auto-detects the workspace + scheme produced by `expo prebuild --platform ios`.
-- Generates `export-options.plist` per build with sensible defaults for `app-store` / `ad-hoc` / `development` / `enterprise` distribution methods.
-- Reads `.p12` + provisioning profile paths from `credentials.json` (same file format EAS downloads).
+## Quick start
 
-**`doctor` is a setup wizard, not just a health check.** It detects missing pieces (`expo.android.package`, EAS link, `eas.json`, keystore) and offers to fix each one interactively — `eas init`, `eas build:configure`, keystore picker (with one-prompt `rehydrate` from `credentials.json` when possible), all chained.
+From the root of an Expo project:
 
-![local-expo-build init: doctor pre-flight + scaffolding in one command](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/setup_init.png)
-
-Three ways to use `local-expo-build`:
-
-- **Local Browser UI** — `npx local-expo-build ui` launches an interactive local web application in your browser to trigger builds, run 1-click Doctor fixes, and manage keystores visually.
-- **Scaffold** — `npx local-expo-build init` drops reusable, committable scripts into your project; you run `npm run build:android:aab` from then on.
-- **Runner** — `npx local-expo-build build android --aab`; one command, no files touched in your repo.
-
-> **No command = setup wizard.** Running `local-expo-build` with no subcommand
-> inside an Expo project starts the `init` setup wizard automatically
-> (equivalent to `local-expo-build init`). In any other directory it prints
-> usage hints instead.
-
-## Install
-
-```bash
-npm i -g local-expo-build
-# or use it ad hoc
-npx local-expo-build --help
-```
-
-## Local Browser UI (`npx local-expo-build ui`)
-
-Launch a lightweight local web interface running on your machine:
-
-```bash
-cd <your-expo-project>
-npx local-expo-build ui
-```
-
-Options: `npx local-expo-build ui [--port 3847] [--no-open] [--logs]`
-
-> **Smart first tab.** The UI opens on the **Doctor** tab when your project
-> isn't ready to build yet (failing checks, missing `expo.android.package`, or
-> no signing keystore) so the one-click fixes are front and center; a healthy
-> project opens straight on the **Build Android** tab. The initial tab choice
-> is never overridden after you pick one.
-
-- **Security Boundary**: Binds strictly to `127.0.0.1` (localhost only).
-- **Chai Visual Theme**: Dark canvas (`#14100c`), warm accent (`#f0824e`), Nunito + JetBrains Mono typography.
-- **Build Tab**: Trigger APK/AAB builds, configure flags (`--clean`, `--no-bump`, `--no-sync`), and view live streaming build logs via SSE. **One-click Build & Fix**: if the project is missing its Android package or release keystore, clicking **Start Local Build** fixes them inline (with a single confirmation) and then builds.
-- **Doctor Tab**: View environment diagnostics cards and trigger 1-click fixes (package name, EAS project linking, `eas.json` creation, and keystore rehydration).
-- **Keystore Wizard & Upload**: Upload `.p12` / `.jks` files directly via multipart drag-and-drop, import paths, generate new keypairs via `keytool`, or rehydrate from `credentials.json`.
-- **One-click EAS actions**: Link an EAS project, generate `eas.json` through `eas build:configure`, and fetch Android signing credentials directly from Expo's API. Authentication uses `EXPO_TOKEN`, an existing `eas login` session, or a token pasted into the local UI (held only in memory).
-- **`--logs`**: Mirrors safe UI-server lifecycle and Android build output to the terminal. Credential-like values and large base64 blobs are redacted.
-- **Scaffold tab**: Drops the reusable, committable `scripts/*.js` + `build:android:aab` / `build:android:apk` npm scripts into your project (same as `npx local-expo-build init`), then you build from the terminal with `npm run build:android:aab`.
-
-### Step-by-Step UI Flow
-
-#### 1. Environment Diagnostics & Auto-Fixes (Doctor Tab)
-Launch `npx local-expo-build ui` and navigate to the **Doctor** tab. The UI performs pre-flight verification on Node, JDK, keytool, `ANDROID_HOME`, `sdkmanager`, `eas-cli`, Expo CLI, Expo SDK version, and `app.json` configuration.
-
-If any checks fail or require setup (such as missing `expo.android.package` or an unlinked EAS project), Environment Doctor highlights them and provides 1-click action buttons (**Fix All Issues**, **Fix Package Name**, **Link EAS Project**, **Create eas.json**).
-
-> **"Start a build now?"** After **Fix All Issues** finishes, the UI offers to
-> build immediately: pick **AAB** or **APK** and it pre-selects the Build
-> tab's artifact picker, switches over, refreshes the doctor/keystore state
-> (so the one-click gate sees the healthy project), and starts the build
-> automatically. **Not now** leaves you on the Doctor tab.
-
-![Doctor Tab - Environment Diagnostics & Issues](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/doctor-issues.png)
-
-Once issues are resolved, the status banner switches to **"All environment checks passed! You are ready to build."** with green **PASS** badges across all environment cards.
-
-![Doctor Tab - All Environment Checks Passed](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/doctor-all-ok.png)
-
-#### 2. Keystore & Signing Management (Keystore Tab)
-Open the **Keystore** tab to manage your release signing credentials. The top card displays your current **Keystore Status** (`keystore.properties` presence, active Store File, and Key Alias).
-
-The **Keystore Management Wizard** provides 5 flexible sub-tabs:
-- **Fetch from EAS**: Authenticate with Expo to select and download your registered release keystores directly from EAS into your local workspace.
-- **Upload .jks File**: Drag-and-drop or select a `.jks` file from your machine for instant upload and configuration.
-- **Import Local Path**: Register an existing `.jks` file path on your local filesystem.
-- **Generate New**: Generate a new release keypair using `keytool` directly within the browser interface.
-- **Rehydrate**: Automatically recreate `keystore.properties` and restore `.jks` from `credentials.json` without re-entering passwords.
-
-The EAS tab's quick **Generate New Keystore** button and the Doctor tab's **Rehydrate Keystore** button use the same providers as these sub-tabs: generation runs with the shared server defaults (`release.p12`, alias `release`) and a server-generated password shown once with a **Copy** button; rehydration posts the same explicit rehydrate provider as the Rehydrate tab.
-
-![Keystore Tab - EAS Fetch & Credentials Management](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/keystore-tab.png)
-
-> **Keystore auto-setup (one-click).** Whenever a fix flow needs a release
-> keystore that isn't configured yet — **Start Local Build** (Build & Fix),
-> **Fix All Issues**, `doctor --fix`, or the `build android` pre-flight — the
-> same shared chain runs:
->
-> 1. **Rehydrate** — `credentials.json` + `.jks` already on disk are bound
->    into `keystore.properties` (no password re-entry).
-> 2. **Fetch from EAS** — only when the project is linked to EAS and
->    authenticated (`EXPO_TOKEN`, an `eas login` session, or a token pasted
->    into the UI); reuses your existing cloud keystore and password.
-> 3. **Generate locally** — `keytool` creates a new `release.p12` with a
->    fresh random password.
->
-> If rehydrate or the EAS fetch fails, the chain falls through to the next
-> provider (reported as a non-fatal note). EAS is **never required** — a
-> locally generated keystore builds fine.
->
-> **Password handling.** Only local generation produces a new password, and
-> it is shown exactly once: a **Copy** button in the browser UI, or a
-> `SAVE THIS GENERATED KEYSTORE PASSWORD` line in the terminal. Back it up
-> off-machine — losing it means you can't sign updates to the same app.
-> Rehydrate and EAS fetch keep your existing password, so no new one is
-> shown.
-
-#### 3. Triggering & Monitoring Local Builds (Build Android Tab)
-Navigate to the **Build Android** tab to start your build:
-- **Artifact Format**: Select **AAB (`bundleRelease`)** for Google Play Store release or **APK (`assembleRelease`)** for direct device installation and testing.
-- **EAS Profile**: Set your target EAS profile (e.g. `production`) for automatic `versionCode` bumping and syncing.
-- **Build Options**: Toggle optional build flags including `--clean`, `--no-bump`, `--no-sync`, `--no-prebuild`, or **Debug build**.
-- Click **Start Local Build**. The live status turns to **Building...** with an active build timer, and compilation logs stream in real-time into the **Build Log Output** terminal via Server-Sent Events (SSE).
-
-![Build Android Tab - Build in Progress with Live Logs](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/build-progress.png)
-
-#### 4. Build Completion & Output Artifact
-Upon successful build completion, a green **Build Artifact Ready** banner appears. The log window displays `[OK] Build complete` with the exact file size and full absolute local path to your compiled `.aab` or `.apk` file.
-
-![Build Android Tab - Build Succeeded & Artifact Ready](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/build-done.png)
-
-## Quick start — CLI Scaffold Mode
-
-```bash
-cd <your-expo-project>
+~~~bash
 npx local-expo-build init
-```
-
-`init` runs `doctor` first as a pre-flight, walks you through any missing setup (EAS link, `eas.json`, keystore), then drops the build scripts and adds the `build:android:apk` / `build:android:aab` entries to your `package.json`. If doctor's fix-all already configured the keystore, `init` skips its own keystore prompt (no double setup). Then:
-
-```bash
-npm run build:android:aab     # release AAB → android/app/build/outputs/bundle/release/app-release.aab
-npm run build:android:apk     # release APK → android/app/build/outputs/apk/release/app-release.apk
-```
-
-After the build finishes, the absolute path + size of the artifact is printed at the very end so you always know where it landed.
-
-> **"Run a build now?"** Once setup completes, `init` (and the bare
-> `local-expo-build` invocation) asks if you want to build right away and
-> lists **AAB** / **APK** — choosing one starts the exact `build android`
-> pipeline with that artifact. Non-interactive / CI shells skip the question
-> automatically; pass `--no-build` to turn it off interactively too.
-
-Skip the pre-flight in CI: `npx local-expo-build init --no-doctor --no-keystore --no-build`.
-
-### Alternative — runner mode (no scaffold)
-
-```bash
-npx local-expo-build doctor                 # env + setup wizard
-npx local-expo-build build android --aab    # full pipeline → .aab
-```
-
-Useful if you don't want any files committed to your repo and prefer to drive the whole pipeline from a single CLI call each time.
-
-## Commands
-
-```text
-local-expo-build                          Bare invocation — runs `init` (the setup
-                                            wizard) inside an Expo project; prints
-                                            usage hints in any other directory.
-
-local-expo-build init [--force] [--no-keystore] [--no-doctor] [--no-build]
-                                            Scaffold scripts + package.json entries
-                                            (runs `doctor` first by default; asks
-                                            "Run a build now?" AAB/APK when done)
-
-local-expo-build doctor                     Env check + interactive auto-fix wizard
-                                            (eas init → eas build:configure →
-                                             keystore setup)
-
-# ── Local Web UI ──
-local-expo-build ui [--port <n>] [--no-open] [--logs]
-                                            Launch local browser UI (localhost only)
-                                            for Android builds, Doctor, Keystore,
-                                            multipart upload, and one-click EAS actions.
-
-# ── Android (stable) ──
-local-expo-build build android [--apk|--aab] [--profile <name>]
-                               [--clean] [--no-bump] [--no-sync] [--no-prebuild] [--debug]
-                                            Run the full Android pipeline → .aab|.apk
-
-local-expo-build keystore setup             Interactive picker:
-                                            rehydrate | existing | generate | EAS
-local-expo-build keystore import            Register an existing .jks
-local-expo-build keystore create            Generate a new keystore via keytool
-local-expo-build keystore fetch             Open `eas credentials` to download a .jks
-local-expo-build keystore rehydrate [--move]
-                                            Bind credentials.json + .jks into
-                                            keystore.properties (no password re-entry).
-
-# ── iOS (experimental, macOS only) ──
-local-expo-build build ios [--method <m>] [--scheme <s>] [--configuration <c>]
-                            [--team-id <id>] [--profile-name <n>] [--bundle-id <id>]
-                            [--clean] [--no-bump] [--no-prebuild]
-                                            Run the full iOS pipeline → .ipa
-                                            --method = app-store | ad-hoc |
-                                                       development | enterprise
-
-# ── Shared ──
-local-expo-build update-scripts [-y|--yes]
-                                            Refresh scaffolded scripts/*.js to the
-                                            version bundled with this CLI.
-```
-
-Global flags: `--cwd <path>`, `--verbose` (extra debug logging), `--dry-run`, `--no-update-check`, `--yes-update`.
-
-> **Auto-fix pre-flight.** In an interactive terminal, `local-expo-build build
-> android` checks the two file-based prerequisites (Android package + release
-> signing keystore) before the pipeline starts and offers to set them up with
-> one confirm. The keystore step uses the same shared auto-setup chain as the
-> UI (`src/core/keystore/autoSetup.ts`): rehydrate from `credentials.json` →
-> fetch from EAS (when linked & authenticated) → generate locally. Non-TTY /
-> `--dry-run` are unchanged — the pipeline just fails with its normal error
-> if something's missing.
->
-> **Dry-run** is wired into `build android` and the scaffolded orchestrator. Use it to preview the full pipeline (great for screenshots, sanity checks, CI plan-mode):
->
-> ```bash
-> npx local-expo-build --dry-run build android --aab    # runner mode
-> npm run build:android:aab -- --dry-run                # scaffold mode (or: node scripts/build.js aab --dry-run)
-> ```
->
-> **`--clean`** prompts interactively when neither `--clean` nor `--no-clean` is passed. Default is **No** (faster). Say yes after an Expo SDK upgrade, plugin change, or `MainActivity not found` / "android project is malformed" errors. Pass `--clean` or `--no-clean` explicitly to skip the prompt.
-
-![Dry-run output: the full 7-step build pipeline with no side effects](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/dryrun-build.png)
-
-## How it compares
+~~~
 
-|  | `eas build` (cloud) | `eas build --local` | `npx expo run:android/ios` | `local-expo-build` |
-| --- | --- | --- | --- | --- |
-| Runs locally | No | Yes | Yes | **Yes** |
-| **Works on Windows** | Yes (cloud) | **No** ¹ | Yes (debug only) | **Yes** |
-| Works on macOS / Linux | Yes (cloud) | Yes | Yes | **Yes** |
-| Produces a signed release `.aab` / `.apk` | Yes | Yes | No (debug) | **Yes (Android)** |
-| Produces a signed release `.ipa` | Yes | Yes | No (debug) | **Yes (iOS, experimental)** |
-| Counts against EAS free build quota | **Yes** | No | No | No |
-| Manages release signing config for you | Yes | Yes | No | **Yes** |
-| Bumps `versionCode` from EAS automatically | Yes | Yes | No | **Yes (Android)** |
-| Wait in cloud queue | Sometimes | Never | Never | Never |
-| Needs `eas-cli` installed | Yes | **Yes** | No | Optional ² |
-| Needs `eas.json` set up | Yes | **Yes** | No | No |
-| Needs EAS account / login | Yes | **Yes** | No | Optional ² |
-| Pipeline editable per-project | No | No | No | **Yes** (scaffold mode) |
+The setup wizard checks your environment, helps configure the Android package and release keystore, and adds two npm scripts to your project. Then build the artifact you need:
 
-¹ `eas build --platform android --local` errors with `"Unsupported platform, macOS or Linux is required to build apps for Android"` on Windows — EAS's local build infrastructure uses Unix-only tooling.
+~~~bash
+# Google Play upload
+npm run build:android:aab
 
-² Only needed for: EAS keystore fetch, versionCode sync back to EAS, or doctor's `eas init` / `eas build:configure` auto-fixes. The build itself runs without any EAS dependency.
+# Direct device installation or testing
+npm run build:android:apk
+~~~
 
-**TL;DR:**
+The finished artifact is written under android/app/build/outputs/ and the CLI prints its absolute path and size when the build completes.
 
-- **On Windows?** `local-expo-build` is the only option in the Expo ecosystem to build Android locally.
-- **On Mac/Linux + happy with EAS?** Use `eas build --local` — it's the official path with managed credentials + `eas submit` integration.
-- **On Mac/Linux + want lightweight / no EAS lock-in?** `local-expo-build` is your fit — no eas.json, no login, fully editable pipeline.
+### One-off build without scaffolding
 
-## Why not just use `eas build --local`?
+Use runner mode when you do not want init to add files or scripts to your project:
 
-If you're on Mac or Linux **and** already invested in EAS (account, eas.json, profiles, `eas submit` workflow), `eas build --platform android --local` is the official Expo path and you should use it. It integrates seamlessly with `eas submit`, managed credentials, and the rest of the EAS toolbox.
+~~~bash
+npx local-expo-build doctor
+npx local-expo-build build android --aab
+~~~
 
-Use `local-expo-build` instead when **any** of these is true:
+Use --apk instead of --aab for an APK.
 
-1. **You're on Windows.** `eas build --local` literally won't run — it errors out with `"Unsupported platform, macOS or Linux is required to build apps for Android"`. This is the killer use case: there's no other path to local Expo Android builds on Windows.
-2. **You don't want an EAS account.** No login, no `eas.json`, no project-link ceremony. Just point at any Expo project and get a signed `.aab`.
-3. **You want to vendor + edit the build pipeline in your repo.** Scaffold mode drops 6 readable JS files into `scripts/` that you can customize per-project (custom version bumping, project-specific signing tweaks, pre/post hooks). `eas build` is a black box by design.
-4. **Your project pre-dates EAS** (SDK 50 era) and you never set up the EAS link. `local-expo-build` works on any Expo SDK ≥ 50 with no migration needed.
-5. **You want to script around predictable artifact paths.** Output always lands at `android/app/build/outputs/{apk,bundle}/release/...`. EAS local copies through temp dirs.
+### Install globally
 
-Both tools can coexist. The CLI also writes a `credentials.json` at project root, which `eas submit` (and `eas build` cloud, if you ever want to use it) reads directly — your local-built `.aab` can still be uploaded via `eas submit --path /path/to/app.aab` without re-signing.
+npx is enough for most projects. To keep the command available globally:
 
-## Keystore sources
+~~~bash
+npm install --global local-expo-build
+local-expo-build init
+~~~
 
-When `keystore setup` runs (or when `doctor` / `init` prompt for it), you'll see one of these. **Rehydrate** appears at the top conditionally — only when a complete `credentials.json` + `.jks` are already on disk:
+## What the build does
 
-| Source | What happens |
-| --- | --- |
-| **Rehydrate** | Reads `credentials.json` + the `.jks` it points at, copies the `.jks` into `android/app/<basename>`, writes `keystore.properties`. **No password re-entry.** Ideal after `keystore fetch`. |
-| **Existing .jks** | You point to a file + provide alias/passwords. Copied into `android/app/`. If a matching `credentials.json` is on disk (same path or same content hash), the password prompts are skipped — values reused automatically. |
-| **Generate new** | Wizard runs `keytool -genkeypair` with sane defaults (RSA 2048, 10000d). |
-| **EAS** | Opens `eas credentials` so you can download the project's current keystore from EAS. |
+For a release Android build, the CLI normally:
 
-In every case, after the keystore is registered the CLI also writes a matching `credentials.json` at the project root and adds `keystore.properties`, `*.jks`, and `credentials.json` to `.gitignore`.
+1. Checks the local toolchain and Expo configuration.
+2. Runs Expo prebuild and applies the Gradle version required by the detected Expo SDK.
+3. Bumps the app version and, when available, gets the next Android versionCode from EAS.
+4. Restores or configures the release keystore and injects the Gradle signing configuration.
+5. Runs assembleRelease for an APK or bundleRelease for an AAB.
+6. Optionally syncs the new versionCode back to EAS.
+7. Prints the final artifact path and size.
 
-## Bringing your own keystore (EAS-managed flow)
+The pipeline is designed to recover the keystore after expo prebuild --clean, which can otherwise remove files under android/.
 
-The lowest-friction path from a brand-new clone to a buildable project when your team already has a keystore on EAS. This is what `doctor` will walk you through.
+## Choose a workflow
 
-### 1. Fetch the keystore via EAS CLI
+### Scaffold mode — recommended for repeated builds
 
-```bash
-npx local-expo-build keystore fetch
-# Pre-flight: if eas.json or projectId is missing, we'll offer
-# to run `eas init` / `eas build:configure` before launching EAS.
-```
+~~~bash
+npx local-expo-build init
+npm run build:android:aab
+~~~
 
-EAS opens its interactive menu. Pick:
+init adds an editable scripts/ build pipeline and these entries to package.json:
 
-```text
-✔ Which build profile do you want to configure?  ›  production
-✔ What do you want to do?                        ›  Keystore: Manage everything needed to build your project
-✔ What do you want to do?                        ›  Download existing keystore
-✔ Display sensitive information?                  ›  Yes
-✔ Go back
-✔ What do you want to do?                        ›  credentials.json: Upload/Download credentials …
-✔ What do you want to do?                        ›  Download credentials from EAS to credentials.json
-✔ What do you want to do?                        ›  Exit
-```
-
-You now have:
-
-- `<scope>__<project>.jks` at project root (from "Download existing keystore"),
-- `credentials.json` at project root with all four required fields,
-- `credentials/android/keystore.jks` (the file `credentials.json` actually references).
-
-### 2. Bind everything in one step
-
-```bash
-npx local-expo-build keystore rehydrate
-```
-
-That copies the `.jks` referenced by `credentials.json` into `android/app/<basename>` and writes `keystore.properties` using the passwords already in `credentials.json` — **no re-typing**.
-
-```text
-✓ Copied credentials/android/keystore.jks → android/app/keystore.jks
-✓ keystore.properties written from credentials.json (alias=6805615551f1…)
-✓ Wrote credentials.json (keystorePath=android/app/keystore.jks)
-```
-
-### 3. Build
-
-```bash
-npm run build:android:aab        # scaffold mode
-# or
-npx local-expo-build build android --aab   # runner mode
-```
-
-> Tip: you can skip step 2 entirely — `doctor` detects the rehydrate state automatically and offers the same one-prompt fix inline.
-
-## iOS (experimental, macOS only)
-
-> **Status: community-tested.** The iOS pipeline ships behind an experimental banner because the maintainer develops on Windows and can't validate every build configuration. The code is built on Apple's documented `xcodebuild` interface and follows the same patterns as the Android side, but please [file issues](https://github.com/nikhild64/local-expo-build/issues) when you hit something — and PRs are very welcome.
-
-### Prerequisites
-
-iOS local builds are constrained by Apple and require all of:
-
-- **macOS** (Xcode is macOS-only — Apple does not ship `xcodebuild` for Linux or Windows)
-- **Xcode** 14+ with Command Line Tools (`xcode-select --install`)
-- **Apple Developer account** ($99/yr — required for distribution signing certificates)
-- **A distribution `.p12`** + **provisioning profile** installed in your keychain (drag the `.p12` into Keychain Access; double-click the `.mobileprovision` to install)
-
-`local-expo-build doctor` checks for Xcode / `xcodebuild` automatically on macOS hosts and skips the checks elsewhere.
-
-### Quick start (iOS)
-
-```bash
-# 1. Download credentials from EAS (same flow as Android)
-npx local-expo-build keystore fetch
-# In the EAS menu pick: iOS → Download credentials to credentials.json
-# This produces:
-#   - credentials.json with an `ios` section
-#   - ios/certs/dist.p12  (distribution certificate)
-#   - ios/certs/profile.mobileprovision  (provisioning profile)
-
-# 2. (one-time, manual) Import the .p12 into your login keychain
-#    and double-click the .mobileprovision file. Both go into ~/Library/...
-#    Xcode does this automatically on double-click.
-
-# 3. Build the .ipa
-npx local-expo-build build ios --method app-store \
-  --team-id ABCDE12345 \
-  --bundle-id com.yourcompany.yourapp \
-  --profile-name "Your Profile Name"
-```
-
-The build runs through these 5 steps:
-
-```text
-1/5 expo prebuild (ios)
-2/5 bump version
-3/5 detect Xcode workspace + credentials
-4/5 xcodebuild archive
-5/5 xcodebuild -exportArchive (method=app-store)
-
-Build complete (.ipa, 14.3 MB):
-  /path/to/your/app/ios/build/export/YourApp.ipa
-```
-
-Use `--dry-run` to preview the 5 steps without invoking xcodebuild.
-
-### What the CLI does NOT handle (yet)
-
-By design, the experimental iOS support keeps a tight scope so we don't ship untested Apple-keychain code that could leave your machine in a weird state. You're still responsible for:
-
-- **Keychain `.p12` import.** Double-click the file in Finder, or `security import dist.p12 -k ~/Library/Keychains/login.keychain-db -P <password>`.
-- **Provisioning profile install.** Double-click the `.mobileprovision`, or copy to `~/Library/MobileDevice/Provisioning Profiles/<UUID>.mobileprovision`.
-- **TestFlight / App Store upload.** Use `xcrun altool --upload-app` or Apple's Transporter app after the `.ipa` is built.
-
-These are on the roadmap (full `certs setup` flow + EAS cert fetch + TestFlight upload) for a future release once there's been enough community testing of the core build flow.
-
-### iOS-specific files
-
-| Path | Purpose | Gitignored? |
-| --- | --- | --- |
-| `credentials.json` → `ios` block | EAS local-credentials shape for iOS (`distributionCertificate.path/password`, `provisioningProfilePath`) | Yes (auto via the Android setup) |
-| `ios/build/export-options.plist` | Regenerated per build with the chosen distribution method | No — derived per-build, safe to commit or gitignore as you prefer |
-| `ios/build/<Scheme>.xcarchive` | Intermediate archive produced by `xcodebuild archive` | Yes (recommend adding `ios/build/` to `.gitignore`) |
-| `ios/build/export/<Scheme>.ipa` | The final `.ipa` | Yes (recommend adding `ios/build/` to `.gitignore`) |
-
-### Known caveats
-
-- **Auto-detected scheme is the workspace basename.** Works for Expo's default prebuild output; pass `--scheme MyOtherScheme` if your project has multiple schemes.
-- **Manual signing requires `--team-id`.** Without it, `xcodebuild` falls back to automatic signing, which only works for `development` builds if your Apple ID is logged into Xcode.
-- **Multi-bundle apps not handled.** If your project has app extensions (widgets, watch app, share extension), each needs its own provisioning profile and the current `--profile-name` flag only sets one. File an issue with your `app.json` `extra.eas.build.experimental.ios.appExtensions` setup if you hit this.
-- **No `bumpVersion` for iOS-specific `buildNumber`.** Today the bump step still updates `versionCode` in `android/app/build.gradle` (no-op on iOS-only builds). Expo's prebuild reads `expo.version` from `app.json` and writes it into `Info.plist`'s `CFBundleShortVersionString` — for `CFBundleVersion` (the iOS equivalent of `versionCode`) you currently need to manage that in `app.json` → `ios.buildNumber` manually. PRs to wire this up are welcome.
-
-### How it works (iOS pipeline)
-
-```text
-expo prebuild --platform ios
-  → (you import .p12 + provisioning profile manually, one-time)
-  → bump app.json version                       (src/core/bumpVersion.ts)
-  → detect ios/<Workspace>.xcworkspace          (src/core/ios/detect.ts)
-  → read credentials.json `ios` section         (src/core/ios/credentials.ts)
-  → write ios/build/export-options.plist        (src/core/ios/exportOptions.ts)
-  → xcodebuild archive                          (src/core/ios/xcodebuild.ts)
-  → xcodebuild -exportArchive → .ipa
-```
-
-## Files this CLI creates / touches
-
-| Path | Purpose | Gitignored? |
-| --- | --- | --- |
-| `keystore.properties` (root) | Gradle release `signingConfig` source of truth: `storeFile`, `storePassword`, `keyAlias`, `keyPassword` | Yes (auto) |
-| `credentials.json` (root) | EAS submit/cloud's local-credential pointer. Kept in sync with `keystore.properties`. | Yes (auto) |
-| `android/app/<storeFile>` | The actual `.jks` that Gradle reads | Yes (`*.jks`, auto) |
-| `eas.json` (root) | EAS build profile config (created by `eas build:configure`) | No — commit it |
-| `app.json` → `expo.extra.eas.projectId` | EAS link (written by `eas init`) | No — commit it |
-| `app.json` → `expo.android.package` | Android applicationId | No — commit it |
-| `scripts/build.js` | (Scaffold mode only) single orchestrator entry point — what `npm run build:android:*` actually calls | No — commit it |
-| `scripts/{pin-gradle,bump-version,setup-signing,sync-eas-version,print-artifact}.js` | (Scaffold mode only) per-step modules orchestrated by `build.js`; edit any one to customize that step for your project | No — commit them |
-
-> **Security:** `keystore.properties` and `credentials.json` both contain plaintext keystore passwords. The CLI gitignores them automatically. **Don't commit them. Don't paste them into chat.** If you need them in CI, base64-encode and inject via secrets.
-
-## Multi-SDK support
-
-`local-expo-build` carries a small table of Gradle wrapper versions per SDK in [`src/core/pinGradle.ts`](src/core/pinGradle.ts):
-
-```ts
-export const GRADLE_PIN: Record<number, string | null> = {
-  50: null,
-  51: null,
-  52: null,
-  53: null,
-  54: null,
-  55: '8.13',   // expo-manifests components.release workaround
-  56: null,
-};
-```
-
-If your SDK isn't pinned, `pinGradle` is a no-op. Add a row + open a PR if a future SDK needs one.
-
-## Requirements
-
-**All platforms:**
-
-- Node ≥ 20 (Node 18 reached EOL in April 2025)
-- `eas-cli` is **optional** — only needed for EAS version sync, EAS credentials fetch, or doctor's `eas init` / `eas build:configure` auto-fixes
-
-**Android builds (cross-platform):**
-
-- JDK 17 (recommended for Expo SDK 55)
-- Android SDK + `ANDROID_HOME` env var
-- `keytool` on `PATH` (ships with the JDK)
-
-**iOS builds (macOS only):**
-
-- macOS (Apple does not ship `xcodebuild` for Linux or Windows)
-- Xcode 14+ with Command Line Tools (`xcode-select --install`)
-- Apple Developer account ($99/yr — for distribution signing certificates)
-
-Run `local-expo-build doctor` to verify all of the above — iOS-specific checks are auto-skipped on non-macOS hosts.
-
-## How it works (pipeline)
-
-```text
-expo prebuild --platform android
-  → pin Gradle wrapper            (src/core/pinGradle.ts)
-  → bump version + EAS code       (src/core/bumpVersion.ts)
-  → ensure keystore               (src/core/keystore/*)
-  → restore .jks into android/app (src/core/setupSigning.ts → ensureKeystoreInAndroidApp)
-  → inject release signing        (src/core/setupSigning.ts)
-  → write/sync credentials.json   (src/core/writeCredentialsJson.ts)
-  → gradlew {assemble|bundle}Release
-  → sync versionCode to EAS       (src/core/syncEasVersion.ts)
-  → print artifact path + size    (templates/scripts/print-artifact.js)
-```
-
-The scaffolded `scripts/*.js` files mirror the same logic so they're vendorable and editable per-project.
-
-### Doctor's auto-fix chain
-
-```text
-expo.android.package (app.json or app.config.*)  → prompt + write to app.json
-EAS link (expo.extra.eas.projectId)              → offer `eas init`
-eas.json                                          → offer `eas build:configure --platform android`
-keystore.properties                               → offer keystore picker
-                                                     ├─ credentials.json + .jks present  → rehydrate (no password re-entry)
-                                                     └─ else                              → existing | generate | EAS
-```
-
-Each accepted step re-runs the affected checks in place. If everything ends up green, doctor exits 0; otherwise the remaining items are printed under **Suggested next steps to complete setup**.
-
-Dynamic configs (`app.config.{js,ts,cjs,mjs}`) are supported: doctor shells out to `npx expo config --json --type public` and reads the resolved config. If the Expo CLI fails to resolve (e.g. you haven't `npm install`ed yet), the affected rows show a yellow warning instead of pretending. Auto-writes still target `app.json` only — we don't modify dynamic config files.
-
-`init` runs the entire doctor chain as its pre-flight before scaffolding. Pass `--no-doctor` to skip.
-
-Your `package.json` ends up with just two added lines, both pointing at the orchestrator:
-
-```json
+~~~json
 {
   "scripts": {
     "build:android:apk": "node scripts/build.js apk",
     "build:android:aab": "node scripts/build.js aab"
   }
 }
-```
+~~~
 
-The orchestrator (`scripts/build.js`) prints numbered progress (`▸ [3/7] bump version`, etc.) and a final total time. EAS version sync is treated as non-fatal — if your EAS login expires, the build still succeeds and you get a single warning line instead of a hard fail.
+The generated scripts are yours to review and customize. Refresh them later with:
+
+~~~bash
+npx local-expo-build update-scripts
+~~~
+
+### Runner mode — no project files added
+
+~~~bash
+npx local-expo-build build android --aab
+~~~
+
+Runner mode is useful for one-off builds or when you prefer not to commit the generated pipeline.
+
+### Browser UI
+
+~~~bash
+npx local-expo-build ui
+~~~
+
+The UI runs on 127.0.0.1 and provides:
+
+- Environment Doctor checks and guided fixes.
+- Android APK/AAB builds with live logs.
+- Keystore import, generation, EAS fetch, and rehydration.
+- EAS project linking and eas.json setup when needed.
+- A scaffold action equivalent to init.
+
+Useful options:
+
+~~~bash
+npx local-expo-build ui --port 3847 --no-open --logs
+~~~
+
+--logs mirrors safe server and build output to the terminal. Credential-like values and large base64 values are redacted.
+
+#### UI screenshots
+
+The UI guides you from setup through a completed release build:
+
+![Setup wizard and scaffold flow](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/setup_init.png)
+
+![Doctor showing environment issues and guided fixes](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/doctor-issues.png)
+
+![Doctor showing a ready-to-build environment](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/doctor-all-ok.png)
+
+![Keystore management and EAS credential actions](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/keystore-tab.png)
+
+![Android build in progress with live logs](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/build-progress.png)
+
+![Completed build with the generated artifact path](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/build-done.png)
+
+## Requirements
+
+### All platforms
+
+- Node.js 20 or newer.
+- An Expo project with dependencies installed: npm install, pnpm install, or yarn.
+
+### Android builds
+
+- JDK 17 is recommended for Expo SDK 55.
+- Android SDK with ANDROID_HOME configured.
+- keytool on PATH, included with the JDK.
+- eas-cli is optional. It is only needed for EAS credential fetch, EAS project setup, or version-code synchronization.
+
+Run this before your first build if you are unsure what is missing:
+
+~~~bash
+npx local-expo-build doctor
+~~~
+
+### iOS builds
+
+- macOS only.
+- Xcode 14 or newer with Command Line Tools.
+- An Apple Developer account for distribution signing.
+- A distribution certificate (.p12) and provisioning profile.
+
+## Android signing
+
+The first release build checks for a release keystore. If one is missing, the interactive setup can:
+
+- Rehydrate an existing EAS credentials.json and .jks.
+- Register an existing .jks file.
+- Generate a new keystore with keytool.
+- Fetch the project keystore through EAS.
+
+Start the picker directly with:
+
+~~~bash
+npx local-expo-build keystore setup
+~~~
+
+Individual operations are also available:
+
+~~~bash
+npx local-expo-build keystore import       # use an existing .jks
+npx local-expo-build keystore create       # generate a new keystore
+npx local-expo-build keystore fetch        # download through EAS
+npx local-expo-build keystore rehydrate    # restore from credentials.json
+~~~
+
+If credentials.json already references a downloaded keystore, rehydrate recreates keystore.properties and copies the keystore into android/app/ without asking for the passwords again.
+
+### Keep signing files private
+
+keystore.properties and credentials.json contain plaintext keystore passwords. The setup flow adds them, along with keystore files, to .gitignore. Never commit or share them. Back up the keystore and its passwords securely: losing the original signing key can prevent updates to an app already published on Google Play.
+
+## Command reference
+
+### Setup and diagnostics
+
+~~~text
+local-expo-build                          Run init inside an Expo project
+local-expo-build init [options]           Scaffold scripts and run setup
+local-expo-build doctor                   Check and optionally fix the environment
+local-expo-build ui [options]             Launch the local browser UI
+local-expo-build update-scripts [options] Refresh scaffolded scripts
+~~~
+
+init options:
+
+~~~text
+--force        Overwrite existing scaffolded scripts
+--no-doctor    Skip pre-flight checks
+--no-keystore  Skip interactive keystore setup
+--no-build     Skip the post-setup build prompt
+~~~
+
+### Android
+
+~~~bash
+local-expo-build build android --aab
+local-expo-build build android --apk
+~~~
+
+Common options:
+
+~~~text
+--aab                  Build a release AAB (default)
+--apk                  Build a release APK
+--profile <name>       EAS profile used for version-code lookup (default: production)
+--clean                Run expo prebuild --clean
+--no-clean             Skip the clean prebuild prompt
+--no-bump              Skip version bumping
+--no-sync              Do not sync versionCode back to EAS
+--no-prebuild          Reuse the existing native project
+--debug                Build a debug APK without release signing or EAS
+--max-ram <ram>        Set Gradle/Node memory, for example 4g or 8g
+~~~
+
+For CI or other non-interactive environments, use explicit flags and skip setup prompts when appropriate:
+
+~~~bash
+npx local-expo-build init --no-doctor --no-keystore --no-build
+npx local-expo-build --dry-run build android --aab
+~~~
+
+--dry-run shows the planned pipeline without running the build or writing project files.
+
+![Dry-run output showing the planned build pipeline](https://raw.githubusercontent.com/nikhild64/local-expo-build/main/assets/screenshots/dryrun-build.png)
+
+### iOS (experimental)
+
+~~~bash
+local-expo-build build ios --method app-store \
+  --team-id ABCDE12345 \
+  --bundle-id com.example.app \
+  --profile-name "Your Distribution Profile"
+~~~
+
+Supported methods are app-store, ad-hoc, development, and enterprise. The scheme is detected automatically for the standard Expo prebuild output; use --scheme <name> when needed.
+
+The iOS pipeline runs Expo prebuild, xcodebuild archive, and xcodebuild -exportArchive, producing an IPA under ios/build/export/. You must install the .p12 in Keychain Access and the provisioning profile in Xcode/macOS yourself. Uploading to TestFlight or the App Store is not included.
+
+### Global options
+
+These options can be used with the commands above:
+
+~~~text
+--cwd <path>       Run against a different Expo project directory
+--verbose          Print additional diagnostic output
+--dry-run          Preview actions without making changes
+--no-update-check  Skip npm and scaffold update checks
+--yes-update       Apply an available CLI update without prompting
+~~~
+
+Run npx local-expo-build --help or append --help to any command for the complete current help text.
+
+## EAS: optional, not required
+
+Local builds do not require an EAS account, eas.json, or an EAS cloud build. EAS is useful when you want to:
+
+- Store and fetch a team keystore.
+- Link the project and generate eas.json.
+- Allocate the next versionCode and sync it back after a build.
+- Submit a locally produced artifact using the rest of your EAS workflow.
+
+For a project that already has a keystore on EAS:
+
+~~~bash
+npx local-expo-build keystore fetch
+npx local-expo-build keystore rehydrate
+npx local-expo-build build android --aab
+~~~
+
+If EAS is unavailable, the local keystore providers still work. Version-code synchronization is skipped with a warning when it cannot run; use --no-sync when managing versions yourself.
+
+## Files created or updated
+
+Depending on the workflow, the CLI may create or update:
+
+~~~text
+app.json                         expo.android.package and EAS project link
+eas.json                         EAS build profile configuration, when configured
+keystore.properties              Local Gradle signing configuration (private)
+credentials.json                 EAS-compatible local credentials (private)
+android/app/*.jks or *.p12       Release signing key (private)
+scripts/                         Scaffolded, editable build pipeline
+android/app/build/outputs/       Generated APK/AAB artifacts
+~~~
+
+The CLI adds sensitive signing files to .gitignore during setup. Review the changes before committing, especially if your project uses a custom app.config.* instead of app.json; dynamic config is read for checks but is not rewritten automatically.
 
 ## Troubleshooting
 
-### `validateSigningRelease > Keystore file '…/android/app/keystore.jks' not found`
+### The Android package is missing
 
-This happens when `expo prebuild --clean` (or the "android project is malformed — reinitialize?" prompt) wipes `android/` between keystore setup and the Gradle build. The pipeline restores it automatically as of v0.2.0 — make sure your scaffolded `scripts/setup-signing.js` is up to date:
+Add an Android application ID to app.json, or run doctor and accept its fix:
 
-```bash
-npx local-expo-build init --force
-```
-
-If the recovery itself fails, you'll get a clear list of paths it tried; the fix is usually:
-
-```bash
-npx local-expo-build keystore rehydrate     # if you have credentials.json
-# or
-npx local-expo-build keystore import <path-to-jks>
-```
-
-### `eas credentials failed: Command failed with exit code 1`
-
-`eas credentials` refuses to start without `eas.json` and a linked `expo.extra.eas.projectId`. v0.2.0 pre-flights both and offers to run `eas init` / `eas build:configure` interactively. If you skipped those prompts, run them manually:
-
-```bash
-eas init
-eas build:configure --platform android
-```
-
-Then re-run `npx local-expo-build keystore fetch`.
-
-### `Missing expo.android.package in app.json`
-
-Doctor catches this as a critical check and offers to write it for you with a sensible default derived from `expo.slug` or `expo.ios.bundleIdentifier`. If you're using `app.config.{js,ts}`, doctor can't statically write to it — add the field by hand:
-
-```json
+~~~json
 {
   "expo": {
     "android": {
-      "package": "com.yourcompany.yourapp"
+      "package": "com.example.myapp"
     }
   }
 }
-```
+~~~
 
-### "The android project is malformed, would you like to clear and reinitialize?"
+### The keystore file is missing after prebuild
 
-This is `expo prebuild` detecting that our injected `signingConfigs.release` block doesn't match what it would generate fresh. Accepting it is safe — the build chain re-injects signing and the recovery step puts the `.jks` back before Gradle runs.
+Rehydrate or re-import the signing key, then update the scaffolded scripts if this is an older project:
 
-### `expo CLI (in project) not found` in doctor
+~~~bash
+npx local-expo-build keystore rehydrate
+npx local-expo-build init --force
+~~~
 
-You haven't installed deps in the target Expo project yet. Run `npm install` (or `pnpm install` / `yarn`) in the project root.
+### eas credentials fails
 
-### Build artifact is signed but Play Console rejects it
+EAS credential commands need a linked project and usually eas.json. Run:
 
-Two common causes:
+~~~bash
+eas init
+eas build:configure --platform android
+npx local-expo-build keystore fetch
+~~~
 
-1. **`versionCode` already used.** The `--no-sync` flag suppresses pushing the new `versionCode` back to EAS — if you used it and Play sees the same code as a previous upload, it'll reject. Don't pass `--no-sync` unless you're managing versions manually.
-2. **Different keystore than the one originally registered.** Play Store requires the *same* keystore for all updates to a published app. Use `keystore fetch` + `keystore rehydrate` to get back the original.
+Or use keystore create or keystore import to stay entirely local.
 
-## Testing the CLI locally in another Expo app
+### Google Play rejects the artifact
 
-Three iteration loops, fastest to most-realistic:
+The most common causes are a reused versionCode or a different signing key. Avoid --no-sync unless you manage versioning yourself, and use the original release keystore for updates to an existing app.
 
-```bash
-# 1. npm link — fastest dev loop
-cd local-expo-build && npm run build && npm link
-cd ../my-test-app && npm link local-expo-build
-# now changes in local-expo-build (with `npm run dev` watching) are picked up
-# on the next `npx local-expo-build ...` call from my-test-app.
+## Development
 
-# 2. npm pack — exactly what end users will install
-cd local-expo-build && npm run build && npm pack
-cd ../my-test-app && npm i ../local-expo-build/local-expo-build-0.2.0.tgz
+~~~bash
+npm install
+npm test
+npm run build
+~~~
 
-# 3. Direct invocation — no install at all
-cd local-expo-build && npm run build
-node /abs/path/local-expo-build/bin/local-expo-build.js doctor --cwd /abs/path/my-test-app
-```
+To test a local package in another Expo project:
 
-## Roadmap
+~~~bash
+npm run build
+npm pack
+npm install ../local-expo-build/local-expo-build-<version>.tgz
+~~~
 
-- [x] iOS local builds (experimental in v0.4.0 — awaiting community testing)
-- [x] Auto-update `GRADLE_PIN` table from a hosted manifest (v0.3.0)
-- [ ] `certs setup` interactive flow for iOS (.p12 import + provisioning profile install via `security` / Keychain Access automation)
-- [ ] iOS `buildNumber` (CFBundleVersion) bump + EAS sync — parity with Android's `versionCode` flow
-- [ ] TestFlight / App Store Connect upload (`xcrun altool` / `notarytool` wrapper)
-- [ ] Symbol upload (`mapping.txt` → Play Console / Sentry; iOS `.dSYM` to Sentry)
-- [ ] CI presets (`init --ci` that scaffolds a GitHub Actions / GitLab CI workflow with base64-encoded secrets)
-
-## Contributing
-
-PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, code layout, and conventions.
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md).
-
-## License
-
-[MIT](LICENSE) © Nikhil Dhawan
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [LICENSE](LICENSE).
 
 ---
 
-**Not affiliated with Expo or Google.** "Expo" and "EAS" are trademarks of 650 Industries, Inc. This project consumes EAS's public APIs (`api.expo.dev/graphql`, `eas-cli`) but is independently maintained.
+Not affiliated with Expo or Google. “Expo” and “EAS” are trademarks of 650 Industries, Inc. This project is independently maintained and uses EAS public APIs where selected features require them.
