@@ -9,14 +9,66 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { spawnSync } = require('child_process');
+const { resolveProjectBin, spawnArgs } = require('./resolve-project-bin');
 
-const GRADLE = path.resolve(__dirname, '../android/app/build.gradle');
-const APP_JSON = path.resolve(__dirname, '../app.json');
+const ROOT = path.resolve(__dirname, '..');
+const GRADLE = path.resolve(ROOT, 'android/app/build.gradle');
+const APP_JSON = path.resolve(ROOT, 'app.json');
 
-const app = JSON.parse(fs.readFileSync(APP_JSON, 'utf8'));
-const projectId = app.expo?.extra?.eas?.projectId;
-const applicationId = app.expo?.android?.package;
-const storeVersion = app.expo?.version ?? '1.0.0';
+function parseJsonFromStdout(stdout) {
+  const trimmed = (stdout || '').trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    for (let idx = trimmed.indexOf('{'); idx !== -1; idx = trimmed.indexOf('{', idx + 1)) {
+      try {
+        return JSON.parse(trimmed.slice(idx));
+      } catch {}
+    }
+    return null;
+  }
+}
+
+function readExpoConfig() {
+  const dyn = ['app.config.ts', 'app.config.js', 'app.config.cjs', 'app.config.mjs']
+    .map((f) => path.join(ROOT, f))
+    .find((p) => fs.existsSync(p));
+  if (dyn) {
+    const expoBin = resolveProjectBin('expo', ROOT);
+    if (expoBin) {
+      const sp = spawnArgs(expoBin, ['config', '--json', '--type', 'public']);
+      const res = spawnSync(sp.command, sp.args, { cwd: ROOT, encoding: 'utf8', timeout: 15000, shell: sp.shell });
+      if (res.status === 0 && res.stdout) {
+        const parsed = parseJsonFromStdout(res.stdout);
+        if (parsed) return parsed.expo || parsed;
+      }
+    }
+    const src = fs.readFileSync(dyn, 'utf8');
+    const appJsonFallback = fs.existsSync(APP_JSON) ? JSON.parse(fs.readFileSync(APP_JSON, 'utf8')) : {};
+    const base = appJsonFallback.expo || appJsonFallback || {};
+    const pid = src.match(/\bprojectId\s*:\s*(['"])([^'"]+)\1/);
+    const pkg = src.match(/\bpackage\s*:\s*(['"])([^'"]+)\1/);
+    const ver = src.match(/\bversion\s*:\s*(['"])(\d+\.\d+\.\d+)\1/);
+    return {
+      ...base,
+      version: ver ? ver[2] : base.version,
+      android: { ...(base.android || {}), ...(pkg ? { package: pkg[2] } : {}) },
+      extra: { ...(base.extra || {}), eas: { ...(base.extra?.eas || {}), ...(pid ? { projectId: pid[2] } : {}) } },
+    };
+  }
+  if (fs.existsSync(APP_JSON)) {
+    const raw = JSON.parse(fs.readFileSync(APP_JSON, 'utf8'));
+    return raw.expo || raw;
+  }
+  return {};
+}
+
+const exp = readExpoConfig();
+const projectId = exp?.extra?.eas?.projectId;
+const applicationId = exp?.android?.package;
+const storeVersion = exp?.version ?? '1.0.0';
 if (!projectId) { console.log('No projectId — skip EAS sync'); process.exit(0); }
 
 // Read build.gradle only after confirming the sync is needed, so an

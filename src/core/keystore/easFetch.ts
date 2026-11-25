@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { confirm } from '@inquirer/prompts';
 import { log } from '../../util/log';
 import { detectEasLink, isEasReady } from '../easLink';
+import { invalidateExpoConfigCache } from '../expoConfig';
 import { ensureRemoteAppVersionSource } from '../eas/configure';
 
 /**
@@ -70,6 +71,7 @@ async function ensureEasReady(cwd: string): Promise<void> {
       throw new Error('Aborted. Run `eas init` manually, then re-run `local-expo-build keystore fetch`.');
     }
     await runEas(cwd, ['init'], 'eas init');
+    invalidateExpoConfigCache(cwd);
     link = detectEasLink(cwd);
     if (isEasReady(link)) {
       log.ok('EAS link complete. Continuing with credentials fetch...');
@@ -117,7 +119,7 @@ async function ensureEasReady(cwd: string): Promise<void> {
   if (!isEasReady(link)) {
     throw new Error(
       'EAS setup finished but the project still does not appear ready. ' +
-        'Verify eas.json exists and (for static configs) app.json has expo.extra.eas.projectId, then retry.'
+        'Verify eas.json exists and app.json / app.config.* has extra.eas.projectId, then retry.'
     );
   }
   log.ok('EAS is ready. Continuing with credentials fetch...');

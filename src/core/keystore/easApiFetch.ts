@@ -198,7 +198,7 @@ export async function uploadLocalKeystoreToEas(
   if (!pkg) {
     throw new Error(
       'Missing expo.android.package in your Expo config — EAS cannot register the keystore without the application identifier. ' +
-        'Set it in app.json first (or run `doctor` / fix the package name in the UI).'
+        'Set it in app.json or app.config.* first (or run `doctor` / fix the package name in the UI).'
     );
   }
 

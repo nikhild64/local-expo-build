@@ -8,39 +8,96 @@
  *
  * Usage: node scripts/bump-version.js [profile]   (default profile: production)
  */
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { resolveProjectBin, spawnArgs } = require('./resolve-project-bin');
 
-const APP_JSON = path.resolve(__dirname, '../app.json');
-const PKG_JSON = path.resolve(__dirname, '../package.json');
-const GRADLE = path.resolve(__dirname, '../android/app/build.gradle');
+const ROOT = path.resolve(__dirname, '..');
+const APP_JSON = path.resolve(ROOT, 'app.json');
+const PKG_JSON = path.resolve(ROOT, 'package.json');
+const GRADLE = path.resolve(ROOT, 'android/app/build.gradle');
 const PROFILE = process.argv[2] || 'production';
 
-const appJson = JSON.parse(fs.readFileSync(APP_JSON, 'utf8'));
-const current = appJson.expo.version;
-const parts = current.split('.');
+const dynConfigPath = ['app.config.ts', 'app.config.js', 'app.config.cjs', 'app.config.mjs']
+  .map((f) => path.join(ROOT, f))
+  .find((p) => fs.existsSync(p));
+
+function parseJsonFromStdout(stdout) {
+  const trimmed = (stdout || '').trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    for (let idx = trimmed.indexOf('{'); idx !== -1; idx = trimmed.indexOf('{', idx + 1)) {
+      try {
+        return JSON.parse(trimmed.slice(idx));
+      } catch {}
+    }
+    return null;
+  }
+}
+
+let resolvedExpo = null;
+if (dynConfigPath) {
+  const expoBin = resolveProjectBin('expo', ROOT);
+  if (expoBin) {
+    const sp = spawnArgs(expoBin, ['config', '--json', '--type', 'public']);
+    const res = spawnSync(sp.command, sp.args, { cwd: ROOT, encoding: 'utf8', timeout: 15000, shell: sp.shell });
+    if (res.status === 0 && res.stdout) {
+      const parsed = parseJsonFromStdout(res.stdout);
+      if (parsed) resolvedExpo = parsed.expo || parsed;
+    }
+  }
+}
+
+const appJson = fs.existsSync(APP_JSON) ? JSON.parse(fs.readFileSync(APP_JSON, 'utf8')) : null;
+const pkg = fs.existsSync(PKG_JSON) ? JSON.parse(fs.readFileSync(PKG_JSON, 'utf8')) : null;
+const dynSrc = dynConfigPath ? fs.readFileSync(dynConfigPath, 'utf8') : '';
+const dynVerMatch = dynSrc.match(/\bversion\s*:\s*(['"])(\d+\.\d+\.\d+)\1/);
+const dynProjectIdMatch = dynSrc.match(/\bprojectId\s*:\s*(['"])([^'"]+)\1/);
+const current = resolvedExpo?.version || (dynVerMatch ? dynVerMatch[2] : undefined) || appJson?.expo?.version || pkg?.version;
+const parts = String(current || '').split('.');
 if (parts.length !== 3) {
   console.error(`Unexpected version: "${current}" — expected x.y.z with integer segments (e.g. 1.2.3). Pre-release / build-metadata tags (e.g. 1.0.0-rc.1) are not supported.`);
   process.exit(1);
 }
 const patch = parseInt(parts[2], 10);
 if (!Number.isInteger(patch) || String(patch) !== parts[2]) {
-  console.error(`Unexpected patch segment "${parts[2]}" in app.json version "${current}" — expected a plain integer (no leading zeros, no pre-release tags).`);
+  console.error(`Unexpected patch segment "${parts[2]}" in Expo version "${current}" — expected a plain integer (no leading zeros, no pre-release tags).`);
   process.exit(1);
 }
 parts[2] = String(patch + 1);
 const next = parts.join('.');
-appJson.expo.version = next;
-fs.writeFileSync(APP_JSON, JSON.stringify(appJson, null, 2) + '\n');
-console.log(`app.json: ${current} → ${next}`);
 
-const pkg = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8'));
-pkg.version = next;
-fs.writeFileSync(PKG_JSON, JSON.stringify(pkg, null, 2) + '\n');
+if (dynConfigPath) {
+  const escaped = current.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const versionPropRe = new RegExp(`(\\bversion\\s*:\\s*)(['"])${escaped}\\2`);
+  if (versionPropRe.test(dynSrc)) {
+    fs.writeFileSync(dynConfigPath, dynSrc.replace(versionPropRe, `$1$2${next}$2`));
+    console.log(`${path.basename(dynConfigPath)}: ${current} → ${next}`);
+  } else if (appJson?.expo?.version) {
+    appJson.expo.version = next;
+    fs.writeFileSync(APP_JSON, JSON.stringify(appJson, null, 2) + '\n');
+    console.log(`app.json: ${current} → ${next}`);
+  }
+} else if (appJson) {
+  appJson.expo.version = next;
+  fs.writeFileSync(APP_JSON, JSON.stringify(appJson, null, 2) + '\n');
+  console.log(`app.json: ${current} → ${next}`);
+}
+
+if (pkg) {
+  pkg.version = next;
+  fs.writeFileSync(PKG_JSON, JSON.stringify(pkg, null, 2) + '\n');
+}
 
 let nextCode = null;
-if (appJson.expo.extra?.eas?.projectId) {
+const gradleTextForCode = fs.existsSync(GRADLE) ? fs.readFileSync(GRADLE, 'utf8') : '';
+const localCodeMatch = gradleTextForCode.match(/\bversionCode\s+(\d+)/);
+const localCode = localCodeMatch ? parseInt(localCodeMatch[1], 10) : null;
+const projectId = resolvedExpo?.extra?.eas?.projectId || (dynProjectIdMatch ? dynProjectIdMatch[2] : undefined) || appJson?.expo?.extra?.eas?.projectId;
+if (projectId) {
   try {
     const out = execSync(
       `eas build:version:get --platform android --profile ${PROFILE} --non-interactive`,
@@ -53,17 +110,29 @@ if (appJson.expo.extra?.eas?.projectId) {
       clean.match(/Android\s+versionCode\s*[-–:]\s*(\d+)/i) ||
       clean.match(/versionCode\s*[-–:]\s*(\d+)/i);
     if (m) {
-      nextCode = parseInt(m[1], 10) + 1;
-      console.log(`EAS versionCode: ${m[1]} → ${nextCode}`);
+      const remote = parseInt(m[1], 10);
+      if (localCode !== null && localCode > remote) {
+        nextCode = localCode + 1;
+        console.warn(`Local versionCode (${localCode}) > EAS remote (${remote}) — setting remote to ${nextCode} and syncing locally.`);
+        try {
+          execSync(
+            `eas build:version:set --platform android --profile ${PROFILE} --version-code ${nextCode} --version-name ${next} --non-interactive`,
+            { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 30000 }
+          );
+          console.log(`EAS remote versionCode set to ${nextCode}`);
+        } catch {
+          console.warn(`Could not update EAS remote versionCode to ${nextCode}; syncing local to ${nextCode}.`);
+        }
+      } else {
+        nextCode = remote + 1;
+        console.log(`EAS versionCode: ${remote} → ${nextCode}`);
+      }
     } else {
       console.warn('Could not parse EAS versionCode; falling back to local bump');
     }
   } catch (e) {
     // Never built on EAS yet — `build:version:get` fails. Seed the remote
     // version with the local versionCode first, then bump from it.
-    const gradleText = fs.existsSync(GRADLE) ? fs.readFileSync(GRADLE, 'utf8') : '';
-    const m = gradleText.match(/\bversionCode\s+(\d+)/);
-    const localCode = m ? parseInt(m[1], 10) : null;
     if (localCode == null) {
       console.warn('Could not read local versionCode; falling back to local bump');
     } else {

@@ -322,6 +322,17 @@
 
           <!-- Upload Subtab -->
           <div id="subpanel-ks-upload" class="subpanel">
+            <div id="ks-upload-configured-info" class="alert info margin-bottom" style="display: none;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                <div>
+                  <strong>Keystore Configured:</strong> <code>keystore.properties</code> is present and valid (<code id="ks-upload-configured-file"></code>).
+                  <div style="font-size: 12px; margin-top: 4px; opacity: 0.9;">
+                    Click <strong>Upload to Sync to EAS</strong> to upload this keystore to EAS servers, or pick a file below to replace it locally.
+                  </div>
+                </div>
+                <button type="button" id="btn-upload-sync-eas" class="btn btn-primary btn-sm">Upload to Sync to EAS</button>
+              </div>
+            </div>
             <form id="form-ks-upload" class="wizard-form">
               <div class="drop-zone" id="jks-drop-zone">
                 <input type="file" id="input-jks-file" accept=".p12,.jks,.keystore" style="display: none;">

@@ -3,6 +3,7 @@ import path from 'path';
 import { execaSync } from 'execa';
 import { log } from '../util/log';
 import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin';
+import { evaluateStaticDynamicConfig, findDynamicConfigFile } from './expoConfigEdit';
 
 /**
  * Returns the resolved Expo config (the inner `expo` object — so the call
@@ -10,20 +11,21 @@ import { projectBinExecArgs, resolveProjectBin } from '../util/resolveProjectBin
  * never `config.expo.android.package`).
  *
  * Resolution order:
- *  1. If `app.config.js` / `app.config.ts` exists, shell out to the local
- *     `expo config --json --type public`. This is the source of truth
- *     for dynamic configs; static `app.json` (if any) gets merged in by the
- *     Expo CLI itself.
+ *  1. If `app.config.ts` / `app.config.js` / `.cjs` / `.mjs` exists, shell out
+ *     to the local `expo config --json --type public` (source of truth for
+ *     dynamic configs; static `app.json` gets merged in by Expo CLI itself).
+ *     If the local Expo CLI is unavailable or fails, fall back to static AST
+ *     evaluation when the config fields are statically resolvable.
  *  2. Otherwise, parse `app.json` directly (fast path — no spawn).
  *  3. Otherwise, return `null` (not an Expo project, or config unreadable).
  *
  * Result is cached per-process. Call `invalidateExpoConfigCache(cwd)` after
- * mutating `app.json` so doctor's re-checks pick up the new state.
+ * mutating `app.json` or `app.config.*` so subsequent checks pick up changes.
  */
 export interface ExpoConfigResult {
   /** The resolved `expo` config object (already unwrapped). */
   config: any;
-  /** Where the config came from — affects whether it's safe to auto-write. */
+  /** Where the config came from — affects whether edits target app.json or app.config.*. */
   source: 'app.json' | 'dynamic';
 }
 
@@ -32,7 +34,28 @@ const cache = new Map<string, ExpoConfigResult | null>();
 export function readExpoConfig(cwd: string): ExpoConfigResult | null {
   if (cache.has(cwd)) return cache.get(cwd) ?? null;
 
-  // Fast path: if app.json exists, read it directly without spawning external CLI processes
+  const dynamicPath = findDynamicConfigFile(cwd);
+  if (dynamicPath) {
+    const fromDynamic = readDynamicConfig(cwd);
+    if (fromDynamic) {
+      cache.set(cwd, fromDynamic);
+      log.debug(`Expo config: resolved ${path.basename(dynamicPath)} via expo CLI`);
+      return fromDynamic;
+    }
+
+    const fromStaticAst = evaluateStaticDynamicConfig(cwd, dynamicPath);
+    if (fromStaticAst) {
+      const result: ExpoConfigResult = { config: fromStaticAst.config, source: 'dynamic' };
+      cache.set(cwd, result);
+      log.debug(`Expo config: resolved ${path.basename(dynamicPath)} via static AST fallback`);
+      return result;
+    }
+
+    cache.set(cwd, null);
+    return null;
+  }
+
+  // Fast path: if only app.json exists, read it directly without spawning external CLI processes
   const appJsonPath = path.join(cwd, 'app.json');
   if (fs.existsSync(appJsonPath)) {
     try {
@@ -49,21 +72,6 @@ export function readExpoConfig(cwd: string): ExpoConfigResult | null {
     }
   }
 
-  const hasDynamic =
-    fs.existsSync(path.join(cwd, 'app.config.js')) ||
-    fs.existsSync(path.join(cwd, 'app.config.ts')) ||
-    fs.existsSync(path.join(cwd, 'app.config.cjs')) ||
-    fs.existsSync(path.join(cwd, 'app.config.mjs'));
-
-  if (hasDynamic) {
-    const fromDynamic = readDynamicConfig(cwd);
-    if (fromDynamic) {
-      cache.set(cwd, fromDynamic);
-      log.debug('Expo config: resolved dynamic app.config.* via expo CLI');
-      return fromDynamic;
-    }
-  }
-
   cache.set(cwd, null);
   return null;
 }
@@ -71,6 +79,24 @@ export function readExpoConfig(cwd: string): ExpoConfigResult | null {
 export function invalidateExpoConfigCache(cwd?: string): void {
   if (cwd) cache.delete(cwd);
   else cache.clear();
+}
+
+function parseJsonFromCliStdout(stdout: string): any | null {
+  const trimmed = stdout.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Configs using dotenv v17 or console.log can emit log lines to stdout before the JSON.
+    for (let idx = trimmed.indexOf('{'); idx !== -1; idx = trimmed.indexOf('{', idx + 1)) {
+      try {
+        return JSON.parse(trimmed.slice(idx));
+      } catch {
+        // continue scanning for the JSON object boundary
+      }
+    }
+    return null;
+  }
 }
 
 function readDynamicConfig(cwd: string): ExpoConfigResult | null {
@@ -87,12 +113,13 @@ function readDynamicConfig(cwd: string): ExpoConfigResult | null {
     const result = execaSync(command, args, {
       cwd,
       reject: false,
-      timeout: 3_000,
+      timeout: 15_000,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...execaOpts,
     });
     if (result.exitCode !== 0 || !result.stdout) return null;
-    const parsed = JSON.parse(result.stdout);
+    const parsed = parseJsonFromCliStdout(result.stdout);
+    if (!parsed) return null;
     const inner = parsed?.expo ?? parsed;
     if (!inner || typeof inner !== 'object') return null;
     return { config: inner, source: 'dynamic' };

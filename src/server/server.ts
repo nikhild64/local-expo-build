@@ -15,9 +15,16 @@ import {
   findRehydrateCandidate,
 } from '../core/keystore';
 import { detectEasLink, isEasReady } from '../core/easLink';
-import { readExpoConfig } from '../core/expoConfig';
+import { getExpoConfigFileLabel } from '../core/expoConfigEdit';
 import { EasApiError, EasAuth, resolveEasAuth } from '../core/eas/api';
-import { EAS_PROJECT_NAME, createProject, getEasViewer, listProjects, writeProjectIdToAppJson } from '../core/eas/link';
+import {
+  EAS_PROJECT_NAME,
+  assertCanLinkExpoConfig,
+  createProject,
+  getEasViewer,
+  listProjects,
+  writeProjectIdToExpoConfig,
+} from '../core/eas/link';
 import { configureEasProject } from '../core/eas/configure';
 import { fetchEasKeystore, listEasKeystores, uploadLocalKeystoreToEas } from '../core/keystore/easApiFetch';
 import { autoGenerateKeystore, autoSetupKeystore, GENERATE_DEFAULTS } from '../core/keystore/autoSetup';
@@ -274,25 +281,26 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
           if (typeof body.projectId !== 'string' && !(typeof body.accountId === 'string' && typeof body.projectName === 'string')) {
             res.writeHead(400); res.end(JSON.stringify({ error: 'projectId or accountId and projectName are required' })); return;
           }
-          const link = detectEasLink(cwd);
-          const config = readExpoConfig(cwd);
-          if (link.kind === 'dynamic-unreadable' || config?.source === 'dynamic') {
-            const projectId = typeof body.projectId === 'string' ? body.projectId : '<EAS_PROJECT_ID>';
-            res.writeHead(409);
-            res.end(JSON.stringify({ error: `Your project uses app.config.js, so app.json cannot be updated safely. Add this to your config: extra: { ...config.extra, eas: { ...config.extra?.eas, projectId: '${projectId}' } }` }));
-            return;
-          }
           const result = await withEasOperation(async () => {
+            const link = detectEasLink(cwd);
+            if (!body.projectId && link.kind === 'linked' && body.overwrite !== true) {
+              const err: any = new Error(
+                `This project is already linked to EAS project ${link.projectId}. Confirm before replacing it.`
+              );
+              err.status = 409;
+              throw err;
+            }
+            assertCanLinkExpoConfig(cwd, typeof body.projectId === 'string' ? body.projectId : undefined);
             let projectId = body.projectId;
             if (!projectId) {
               if (!EAS_PROJECT_NAME.test(body.projectName)) throw new Error('Project name must start with a letter or number and contain only letters, numbers, dots, underscores, or hyphens.');
               projectId = (await createProject(body.accountId, body.projectName, currentEasAuth())).id;
             }
-            writeProjectIdToAppJson(cwd, projectId, body.overwrite === true);
-            return { projectId };
+            const { targetFile } = writeProjectIdToExpoConfig(cwd, projectId, body.overwrite === true);
+            return { projectId, targetFile };
           });
           broadcastSse('doctor-updated', {});
-          serverLog(`EAS project linked (${result.projectId})`);
+          serverLog(`EAS project linked (${result.projectId} -> ${result.targetFile})`);
           res.writeHead(200); res.end(JSON.stringify({ success: true, ...result })); return;
         }
 
@@ -362,9 +370,10 @@ export async function startUiServer(opts: UiServerOpts): Promise<UiServerInstanc
             return;
           }
           setAndroidPackage(cwd, body.packageName);
+          const targetFile = getExpoConfigFileLabel(cwd);
           broadcastSse('doctor-updated', {});
           res.writeHead(200);
-          res.end(JSON.stringify({ success: true, packageName: body.packageName }));
+          res.end(JSON.stringify({ success: true, packageName: body.packageName, targetFile }));
           return;
         }
 

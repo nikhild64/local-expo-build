@@ -259,7 +259,7 @@ describe('bumpVersion EAS versionCode resolution fallbacks', () => {
   it('does not call the GraphQL API when the CLI parses cleanly (happy path)', async () => {
     easCliStub = (cmd, args) => {
       if (args[0] === 'build:version:get') {
-        return { exitCode: 0, stdout: 'Android versionCode - 3' };
+        return { exitCode: 0, stdout: 'Android versionCode - 8' };
       }
       throw new Error(`unexpected eas invocation: ${args.join(' ')}`);
     };
@@ -267,7 +267,68 @@ describe('bumpVersion EAS versionCode resolution fallbacks', () => {
 
     const result = await bumpVersion({ cwd: dir });
 
-    assert.strictEqual(result.versionCode, 4, '3 (CLI) + 1');
+    assert.strictEqual(result.versionCode, 9, '8 (CLI) + 1');
     assert.strictEqual(graphqlCalls.length, 0, 'GraphQL must not run when the CLI parse succeeds');
+  });
+
+  it('sets remote to local + 1 and syncs locally when local versionCode > remote (CLI)', async () => {
+    // Local build.gradle has versionCode 5, remote is behind at 3
+    easCliStub = (cmd, args) => {
+      if (args[0] === 'build:version:get') {
+        return { exitCode: 0, stdout: 'Android versionCode - 3' };
+      }
+      if (args[0] === 'build:version:set') {
+        return { exitCode: 0, stdout: '' };
+      }
+      throw new Error(`unexpected eas invocation: ${args.join(' ')}`);
+    };
+    easApiMod.resolveEasAuth = () => ({ token: 'fake-token' });
+
+    const result = await bumpVersion({ cwd: dir });
+
+    assert.strictEqual(result.versionCode, 6, 'local 5 + 1');
+    const setCall = easCliCalls.find(({ args }) => args[0] === 'build:version:set');
+    assert.ok(setCall, 'must call build:version:set to push local + 1 to remote');
+    const codeIdx = setCall.args.indexOf('--version-code');
+    assert.strictEqual(setCall.args[codeIdx + 1], '6');
+    const nameIdx = setCall.args.indexOf('--version-name');
+    assert.strictEqual(setCall.args[nameIdx + 1], '1.2.4');
+    const gradle = fs.readFileSync(path.join(dir, 'android', 'app', 'build.gradle'), 'utf8');
+    assert.match(gradle, /versionCode 6/);
+    assert.strictEqual(graphqlCalls.length, 0, 'GraphQL must not run when build:version:set succeeds');
+  });
+
+  it('pushes local + 1 via GraphQL when local versionCode > remote and CLI is unavailable', async () => {
+    easCliStub = () => {
+      throw new Error('spawn eas ENOENT');
+    };
+    easApiMod.resolveEasAuth = () => ({ token: 'fake-token' });
+    easApiMod.easGraphql = async (query, variables) => {
+      graphqlCalls.push({ query, variables });
+      if (query.includes('LatestAppVersion')) {
+        return {
+          app: {
+            byId: {
+              latestAppVersionByPlatformAndApplicationIdentifier: { buildVersion: '2' },
+            },
+          },
+        };
+      }
+      return { appVersion: { createAppVersion: { id: 'ver-new' } } };
+    };
+
+    const result = await bumpVersion({ cwd: dir });
+
+    assert.strictEqual(result.versionCode, 6, 'local 5 + 1');
+    assert.strictEqual(graphqlCalls.length, 2, 'should query latest then push local + 1 via mutation');
+    assert.deepStrictEqual(graphqlCalls[1].variables.appVersionInput, {
+      appId: '00000000-0000-0000-0000-000000000000',
+      platform: 'ANDROID',
+      applicationIdentifier: 'com.example.easapp',
+      storeVersion: '1.2.4',
+      buildVersion: '6',
+    });
+    const gradle = fs.readFileSync(path.join(dir, 'android', 'app', 'build.gradle'), 'utf8');
+    assert.match(gradle, /versionCode 6/);
   });
 });

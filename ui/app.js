@@ -56,6 +56,9 @@
   const inputJksFile = document.getElementById('input-jks-file');
   const selectedFileName = document.getElementById('selected-file-name');
   const formKsUpload = document.getElementById('form-ks-upload');
+  const ksUploadConfiguredInfo = document.getElementById('ks-upload-configured-info');
+  const ksUploadConfiguredFile = document.getElementById('ks-upload-configured-file');
+  const btnUploadSyncEas = document.getElementById('btn-upload-sync-eas');
 
   const formKsImport = document.getElementById('form-ks-import');
   const formKsGenerate = document.getElementById('form-ks-generate');
@@ -947,7 +950,7 @@
         });
         const data = await res.json();
         if (res.ok) {
-          await showAlert('Success', `Package name updated to "${data.packageName}" in app.json!`, 'success');
+          await showAlert('Success', `Package name updated to "${data.packageName}" in ${data.targetFile || 'app.json'}!`, 'success');
           fetchDoctor();
         } else {
           await showAlert('Error', data.error || 'Failed to update package name.', 'error');
@@ -1034,8 +1037,8 @@
 
       // 2. Link EAS Project
       if (caps.canEasInit) {
-        await linkEasProject();
-        fixesApplied.push('Linked EAS Project');
+        const linked = await linkEasProject();
+        if (linked) fixesApplied.push('Linked EAS Project');
       }
 
       // 3. Create eas.json
@@ -1483,6 +1486,20 @@
     formKsUpload.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (!inputJksFile.files || !inputJksFile.files[0]) {
+        if (lastKeystoreStatus && lastKeystoreStatus.configured && lastKeystoreStatus.props) {
+          const syncNow = await showModal({
+            title: 'Upload Keystore to EAS',
+            message:
+              `Keystore Configured: keystore.properties is present and valid (${lastKeystoreStatus.props.storeFile}, alias ${lastKeystoreStatus.props.keyAlias}).\n\n` +
+              `Click "Upload to Sync to EAS" to sync your local keystore to EAS servers, or cancel and select a .p12 / .jks file to replace it locally.`,
+            type: 'info',
+            confirmText: 'Upload to Sync to EAS',
+            cancelText: 'Cancel',
+            showCancel: true,
+          });
+          if (syncNow) await syncConfiguredKeystoreToEasWithPrompts();
+          return;
+        }
         await showAlert('Missing File', 'Please select or drag a .jks file first.', 'info');
         return;
       }
@@ -1606,6 +1623,7 @@
     btnTriggerEasFetch.addEventListener('click', fetchEasKeystore);
     if (btnTriggerEasAuto) btnTriggerEasAuto.addEventListener('click', generateKeystoreAuto);
     if (btnTriggerEasUploadLocal) btnTriggerEasUploadLocal.addEventListener('click', uploadLocalKeystoreToEasUI);
+    if (btnUploadSyncEas) btnUploadSyncEas.addEventListener('click', syncConfiguredKeystoreToEasWithPrompts);
   }
 
   async function apiRequest(url, options = {}, retryAuth = true) {
@@ -1690,26 +1708,32 @@
       btn.textContent = 'Loading EAS projects…';
     }
     try {
-      if (!easAuth?.authenticated && !await requestEasToken()) return;
+      if (!easAuth?.authenticated && !await requestEasToken()) return false;
       const accounts = easAuth.accounts || [];
-      if (!accounts.length) return showAlert('No EAS accounts', 'The authenticated account has no available EAS accounts.', 'error');
+      if (!accounts.length) {
+        await showAlert('No EAS accounts', 'The authenticated account has no available EAS accounts.', 'error');
+        return false;
+      }
       const accountId = await showChoiceModal({
         title: 'Select EAS account', message: 'Choose where the project is managed.',
         options: accounts.map((account) => ({ value: account.id, label: account.name, detail: account.id })),
         confirmText: 'Continue',
       });
-      if (!accountId) return;
+      if (!accountId) return false;
       const account = accounts.find((item) => item.id === accountId);
       if (btn) btn.textContent = 'Loading EAS projects…';
       const { res, data } = await apiRequest(`/api/eas/projects?account=${encodeURIComponent(account.name)}`);
-      if (!res.ok) return showAlert('Could not load projects', data.error || 'Please try again.', 'error');
+      if (!res.ok) {
+        await showAlert('Could not load projects', data.error || 'Please try again.', 'error');
+        return false;
+      }
       const projects = Array.isArray(data.projects) ? data.projects : [];
       const options = [
         { value: '__create__', label: '+ Create a new EAS project', detail: `in ${account.name}` },
         ...projects.map((project) => ({ value: project.id, label: project.fullName || project.name, detail: project.slug || project.id })),
       ];
       const projectId = await showChoiceModal({ title: 'Link EAS project', message: 'Select an existing project or create one.', options });
-      if (!projectId) return;
+      if (!projectId) return false;
       let payload;
       if (projectId === '__create__') {
         const projectName = await showPrompt('Create EAS project', 'Enter a project name.', '', 'my-app', (value) => {
@@ -1717,7 +1741,7 @@
           if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value)) return 'Use letters, numbers, dots, underscores, and hyphens; start with a letter or number.';
           return null;
         });
-        if (!projectName) return;
+        if (!projectName) return false;
         payload = { accountId, projectName };
       } else {
         payload = { projectId };
@@ -1726,14 +1750,20 @@
       let result = await requestLink(payload);
       if (result.res.status === 409 && /already linked/i.test(result.data.error || '')) {
         const confirmed = await showModal({ title: 'Replace EAS project link?', message: result.data.error, type: 'info', confirmText: 'Replace link', showCancel: true });
-        if (!confirmed) return;
+        if (!confirmed) return false;
         result = await requestLink({ ...payload, overwrite: true });
       }
-      if (!result.res.ok) return showAlert('Could not link project', result.data.error || 'Please try again.', 'error');
-      await showAlert('EAS project linked', `Project ${result.data.projectId} is now linked.`, 'success');
-      fetchDoctor(); fetchEasKeystores();
+      if (!result.res.ok) {
+        await showAlert('Could not link project', result.data.error || 'Please try again.', 'error');
+        return false;
+      }
+      const targetNote = result.data.targetFile ? ` (${result.data.targetFile})` : '';
+      await showAlert('EAS project linked', `Project ${result.data.projectId} is now linked${targetNote}.`, 'success');
+      fetchStatus(); fetchDoctor(); fetchEasKeystores();
+      return true;
     } catch (err) {
       await showAlert('Could not link EAS project', err.message || 'A network error occurred while contacting EAS.', 'error');
+      return false;
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -1770,7 +1800,7 @@
       easKeystores = [];
       easKeystoreList.innerHTML = '';
       easKeystoreStatus.textContent = data.error || 'Link an EAS project and authenticate to list stored keystores.';
-      updateEasLinkUI({ kind: 'not-linked' });
+      if (res.status === 409) updateEasLinkUI({ kind: 'not-linked' });
       if (easActionButtons) easActionButtons.style.display = 'none';
       return;
     }
@@ -1883,6 +1913,25 @@
     }
   }
 
+  async function syncConfiguredKeystoreToEasWithPrompts() {
+    if (!easAuth?.authenticated && !(await requestEasToken())) return;
+    await fetchStatus();
+    if (!currentStatusData?.easLink || currentStatusData.easLink.kind !== 'linked') {
+      const wantLink = await showModal({
+        title: 'Link EAS Project First',
+        message: 'This project is not linked to an EAS project yet. Link an EAS project now so your keystore can be uploaded to EAS servers?',
+        type: 'info',
+        confirmText: 'Link & Upload',
+        cancelText: 'Cancel',
+        showCancel: true,
+      });
+      if (!wantLink) return;
+      const linked = await linkEasProject();
+      if (!linked) return;
+    }
+    await uploadLocalKeystoreToEasUI();
+  }
+
   async function uploadLocalKeystoreToEasUI() {
     const originalText = btnTriggerEasUploadLocal ? btnTriggerEasUploadLocal.textContent : '';
     if (btnTriggerEasUploadLocal) {
@@ -1949,6 +1998,10 @@
       applySmartKeystoreSubtab(data);
 
       if (data.configured && data.props) {
+        if (ksUploadConfiguredInfo && ksUploadConfiguredFile) {
+          ksUploadConfiguredFile.textContent = `${data.props.storeFile} · alias ${data.props.keyAlias}`;
+          ksUploadConfiguredInfo.style.display = 'block';
+        }
         keystoreStatusContent.innerHTML = `
           <div class="alert ok margin-bottom">
             <strong>Keystore Configured:</strong> <code>keystore.properties</code> is present and valid.
@@ -1959,6 +2012,7 @@
           </div>
         `;
       } else if (data.rehydrateCandidate) {
+        if (ksUploadConfiguredInfo) ksUploadConfiguredInfo.style.display = 'none';
         keystoreStatusContent.innerHTML = `
           <div class="alert info margin-bottom">
             <strong>Rehydrate Available:</strong> Found <code>credentials.json</code> referencing <code>${escapeHtml(data.rehydrateCandidate.jksSource)}</code>.
@@ -1966,6 +2020,7 @@
           <p>Click "Perform Rehydration" in the Rehydrate tab to quickly restore <code>keystore.properties</code> without password re-entry.</p>
         `;
       } else {
+        if (ksUploadConfiguredInfo) ksUploadConfiguredInfo.style.display = 'none';
         keystoreStatusContent.innerHTML = `
           <div class="alert danger margin-bottom">
             <strong>No Active Keystore:</strong> <code>keystore.properties</code> is missing or incomplete. Use the wizard below to upload, import, or generate a keystore before building.

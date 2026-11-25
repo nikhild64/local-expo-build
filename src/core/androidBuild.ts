@@ -8,6 +8,7 @@ import { setupSigning, readKeystoreProps } from './setupSigning';
 import { gradleRun } from './gradleRun';
 import { syncEasVersion } from './syncEasVersion';
 import { ensureKeystore } from './keystore';
+import { getExpoConfigFileLabel } from './expoConfigEdit';
 
 export interface Logger {
   step: (msg: string) => void;
@@ -99,7 +100,7 @@ export async function runAndroidBuild(opts: AndroidBuildOpts): Promise<AndroidBu
   } else if (opts.bump !== false) {
     logger.step('3/6 bump version');
     if (dryRun) {
-      logger.dim(`[dry-run] would fetch next versionCode from EAS (profile=${profile}) and write app.json + build.gradle`);
+      logger.dim(`[dry-run] would fetch next versionCode from EAS (profile=${profile}) and write ${getExpoConfigFileLabel(opts.cwd)} + build.gradle`);
     } else {
       await bumpVersion({ cwd: opts.cwd, profile });
     }

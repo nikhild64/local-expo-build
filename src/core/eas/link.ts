@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { EasApiError, EasAuth, easGraphql } from './api';
-import { invalidateExpoConfigCache } from '../expoConfig';
+import { invalidateExpoConfigCache, readExpoConfig } from '../expoConfig';
+import { canEditExpoConfig, findDynamicConfigFile, setDynamicConfigValue } from '../expoConfigEdit';
 
 export interface EasAccount { id: string; name: string }
 export interface EasProject { id: string; name: string; slug: string; fullName: string }
@@ -42,6 +43,60 @@ export async function createProject(accountId: string, projectName: string, auth
     }
     throw err;
   }
+}
+
+function uneditableDynamicLinkError(fileName: string, projectId?: string): Error {
+  const idLiteral = projectId || '<EAS_PROJECT_ID>';
+  const err: any = new Error(
+    `Your project uses ${fileName}, whose config object is constructed dynamically and cannot be updated safely. Add this to your config: extra: { ...config.extra, eas: { ...config.extra?.eas, projectId: '${idLiteral}' } }`
+  );
+  err.status = 409;
+  return err;
+}
+
+/**
+ * Verifies up front that the project's Expo config (`app.json` or `app.config.*`)
+ * can be safely edited before creating remote EAS resources.
+ */
+export function assertCanLinkExpoConfig(cwd: string, candidateProjectId?: string): void {
+  const dynamicPath = findDynamicConfigFile(cwd);
+  if (dynamicPath && !canEditExpoConfig(cwd)) {
+    throw uneditableDynamicLinkError(path.basename(dynamicPath), candidateProjectId);
+  }
+}
+
+/**
+ * Writes `extra.eas.projectId` to the active Expo config (`app.config.*` if
+ * present, otherwise `app.json`).
+ */
+export function writeProjectIdToExpoConfig(
+  cwd: string,
+  projectId: string,
+  overwrite = false
+): { targetFile: string } {
+  const dynamicPath = findDynamicConfigFile(cwd);
+  if (dynamicPath) {
+    const fileName = path.basename(dynamicPath);
+    const resolved = readExpoConfig(cwd);
+    const inheritedExistingValue: string | undefined = resolved?.config?.extra?.eas?.projectId;
+    try {
+      setDynamicConfigValue(dynamicPath, ['extra', 'eas', 'projectId'], projectId, {
+        overwrite,
+        checkConflict: true,
+        inheritedExistingValue,
+      });
+    } catch (err: any) {
+      if (err?.uneditableDynamicConfig) {
+        throw uneditableDynamicLinkError(fileName, projectId);
+      }
+      throw err;
+    }
+    invalidateExpoConfigCache(cwd);
+    return { targetFile: fileName };
+  }
+
+  writeProjectIdToAppJson(cwd, projectId, overwrite);
+  return { targetFile: 'app.json' };
 }
 
 export function writeProjectIdToAppJson(cwd: string, projectId: string, overwrite = false): void {

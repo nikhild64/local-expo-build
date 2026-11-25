@@ -22,6 +22,12 @@ import { ensureKeystore } from '../core/keystore';
 import { findRehydrateCandidate } from '../core/keystore/rehydrate';
 import { autoSetupKeystore, findUnconfiguredKeystoreFile } from '../core/keystore/autoSetup';
 import { readExpoConfig, invalidateExpoConfigCache } from '../core/expoConfig';
+import {
+  canEditExpoConfig,
+  findDynamicConfigFile,
+  getExpoConfigFileLabel,
+  setDynamicConfigValue,
+} from '../core/expoConfigEdit';
 import { ensureRemoteAppVersionSource } from '../core/eas/configure';
 
 export type CheckResult = { name: string; ok: boolean; detail?: string; warn?: boolean };
@@ -83,6 +89,7 @@ async function offerEasLink(opts: EasOfferOpts): Promise<EasLinkResult> {
     if (yes) {
       try {
         await execa('eas', ['init'], { cwd, stdio: 'inherit' });
+        invalidateExpoConfigCache(cwd);
         log.ok('EAS link complete.');
         const fresh = detectEasLink(cwd);
         replaceResultByName(results, 'EAS project linked', easLinkCheck(fresh));
@@ -134,15 +141,50 @@ async function offerEasConfigure(opts: EasOfferOpts): Promise<EasLinkResult> {
 }
 
 async function which(cmd: string, args: string[] = ['-version'], signal?: AbortSignal): Promise<string | null> {
+  const localAc = new AbortController();
+  const onParentAbort = () => localAc.abort();
+  if (signal) {
+    if (signal.aborted) {
+      const err: any = new Error('Aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
+    signal.addEventListener('abort', onParentAbort, { once: true });
+  }
+  let hardTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { stdout, stderr, exitCode } = await execa(cmd, args, {
+    const child = execa(cmd, args, {
       reject: false,
-      timeout: 1_500,
+      timeout: 2_500,
+      forceKillAfterDelay: 200,
       stdio: ['ignore', 'pipe', 'pipe'],
       // execa v9 renamed `signal` to `cancelSignal` — the old key throws, which
       // the catch below would swallow into a misleading "not found" row.
-      cancelSignal: signal,
+      cancelSignal: localAc.signal,
     });
+    const hardTimeout = new Promise<null>((resolve) => {
+      hardTimer = setTimeout(() => {
+        localAc.abort();
+        // On Windows, .cmd shims (e.g. eas.cmd) can leave grandchild stdio
+        // pipes open after timeout/SIGTERM — destroy our pipe ends so doctor
+        // never stalls waiting for them.
+        try { child.stdout?.destroy(); } catch {}
+        try { child.stderr?.destroy(); } catch {}
+        try { (child as any).unref?.(); } catch {}
+        resolve(null);
+      }, 3_200);
+    });
+    child.catch(() => null);
+    const res = await Promise.race([child, hardTimeout]);
+    if (!res) {
+      if (signal?.aborted) {
+        const err: any = new Error('Aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+      return null;
+    }
+    const { stdout, stderr, exitCode } = res;
     if (exitCode !== 0 && !stdout) return null;
     const line = (stdout || stderr || '').split('\n')[0]?.trim();
     if (!line || line.includes('not recognized') || line.includes('is not internal') || line.includes('not found')) {
@@ -152,8 +194,11 @@ async function which(cmd: string, args: string[] = ['-version'], signal?: AbortS
   } catch (err: any) {
     // Propagate cancellation so a timed-out doctor check stops promptly
     // instead of silently degrading into a misleading "not found" row.
-    if (err?.name === 'AbortError' || err?.isCanceled) throw err;
+    if ((err?.name === 'AbortError' || err?.isCanceled) && signal?.aborted) throw err;
     return null;
+  } finally {
+    if (hardTimer) clearTimeout(hardTimer);
+    if (signal) signal.removeEventListener('abort', onParentAbort);
   }
 }
 
@@ -197,7 +242,9 @@ function easLinkCheck(easLink: EasLinkResult): CheckResult {
         warn: true,
         detail: easLink.hasAppJson
           ? 'no expo.extra.eas.projectId — run `eas init` for managed JKS'
-          : 'no app.json — run `eas init` to link this project',
+          : easLink.source === 'dynamic'
+            ? 'no extra.eas.projectId in app.config.* — run `eas init` or Link EAS Project'
+            : 'no app.json — run `eas init` to link this project',
       };
     case 'dynamic-unreadable':
       return {
@@ -225,11 +272,7 @@ const ANDROID_PKG_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
 
 export function androidPackageCheck(cwd: string): AndroidPackageCheck {
   const resolved = readExpoConfig(cwd);
-  const hasDynamicConfig =
-    fs.existsSync(path.join(cwd, 'app.config.js')) ||
-    fs.existsSync(path.join(cwd, 'app.config.ts')) ||
-    fs.existsSync(path.join(cwd, 'app.config.cjs')) ||
-    fs.existsSync(path.join(cwd, 'app.config.mjs'));
+  const hasDynamicConfig = !!findDynamicConfigFile(cwd);
 
   if (resolved) {
     const pkg: string | undefined = resolved.config?.android?.package;
@@ -474,10 +517,11 @@ interface SuggestionCtx {
   cliCmd: string;
 }
 
-function suggestPackageName(appJson: any): string {
-  const ios = appJson?.expo?.ios?.bundleIdentifier;
+function suggestPackageName(configOrAppJson: any): string {
+  const inner = configOrAppJson?.expo ?? configOrAppJson;
+  const ios = inner?.ios?.bundleIdentifier;
   if (typeof ios === 'string' && ANDROID_PKG_RE.test(ios)) return ios;
-  const seed: unknown = appJson?.expo?.slug || appJson?.expo?.name || 'myapp';
+  const seed: unknown = inner?.slug || inner?.name || 'myapp';
   const cleaned = String(seed).toLowerCase().replace(/[^a-z0-9]/g, '');
   const safe = cleaned && /^[a-z]/.test(cleaned) ? cleaned : `app${cleaned || 'name'}`;
   return `com.example.${safe}`;
@@ -489,33 +533,32 @@ async function offerAndroidPackageFix(
   results: CheckResult[],
   dryRun: boolean
 ): Promise<boolean> {
-  // Only offer when we can safely write app.json and the field is genuinely missing.
-  // Skip malformed values (don't overwrite intentional input) and dynamic configs.
+  // Only offer when we can safely write the Expo config and the field is genuinely missing.
+  // Skip malformed values (don't overwrite intentional input) and uneditable dynamic configs.
   if (!process.stdin.isTTY || dryRun) return false;
-  if (androidPkg.source !== 'app.json') return false;
+  const canEdit =
+    androidPkg.source === 'app.json' ||
+    (androidPkg.source === 'dynamic' && canEditExpoConfig(cwd));
+  if (!canEdit) return false;
   if (androidPkg.pkg !== null) return false;
 
-  const appJsonPath = path.join(cwd, 'app.json');
-  let appJson: any;
-  try {
-    appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
-  } catch {
-    return false; // malformed JSON — caller already showed an error row
-  }
+  const targetFile = getExpoConfigFileLabel(cwd);
+  const resolved = readExpoConfig(cwd);
+  if (!resolved) return false;
 
   log.warn(
-    'expo.android.package is missing in app.json. Gradle and EAS sync will both fail without it.'
+    `expo.android.package is missing in ${targetFile}. Gradle and EAS sync will both fail without it.`
   );
   const yes = await confirm({
-    message: 'Add `expo.android.package` to app.json now?',
+    message: `Add \`android.package\` to ${targetFile} now?`,
     default: true,
   });
   if (!yes) {
-    log.dim('Skipped. Add expo.android.package to app.json manually before building.');
+    log.dim(`Skipped. Add android.package to ${targetFile} manually before building.`);
     return false;
   }
 
-  const suggested = suggestPackageName(appJson);
+  const suggested = suggestPackageName(resolved.config);
   const pkg = (
     await input({
       message: 'Android applicationId (e.g. com.yourcompany.yourapp):',
@@ -526,16 +569,12 @@ async function offerAndroidPackageFix(
     })
   ).trim();
 
-  appJson.expo = appJson.expo || {};
-  appJson.expo.android = appJson.expo.android || {};
-  appJson.expo.android.package = pkg;
-  fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2) + '\n', 'utf8');
-  invalidateExpoConfigCache(cwd);
-  log.ok(`Wrote expo.android.package = "${pkg}" to app.json`);
+  setAndroidPackage(cwd, pkg);
+  log.ok(`Wrote android.package = "${pkg}" to ${targetFile}`);
 
   const idx = results.indexOf(androidPkg.result);
   if (idx !== -1) {
-    results[idx] = { name: 'Android package (app.json)', ok: true, detail: pkg };
+    results[idx] = { name: androidPkg.result.name, ok: true, detail: pkg };
   }
   return true;
 }
@@ -543,10 +582,13 @@ async function offerAndroidPackageFix(
 function buildSuggestions({ androidPkg, easLink, ks, jks, cred, cliCmd }: SuggestionCtx): string[] {
   const out: string[] = [];
 
-  if (!androidPkg.result.ok && androidPkg.source === 'app.json') {
+  if (!androidPkg.result.ok && (androidPkg.source === 'app.json' || androidPkg.source === 'dynamic')) {
     out.push(
-      'Set the Android applicationId in app.json:\n' +
-        '     { "expo": { "android": { "package": "com.yourcompany.yourapp" } } }'
+      androidPkg.source === 'app.json'
+        ? 'Set the Android applicationId in app.json:\n' +
+          '     { "expo": { "android": { "package": "com.yourcompany.yourapp" } } }'
+        : 'Set the Android applicationId in your app.config.*:\n' +
+          '     android: { package: "com.yourcompany.yourapp" }'
     );
   } else if (!androidPkg.result.ok && androidPkg.source === 'none') {
     out.push('Run inside an Expo project root (no app.json or app.config.* detected).');
@@ -606,6 +648,12 @@ export function setAndroidPackage(cwd: string, packageName: string): void {
       `"${pkg}" is not a valid Android applicationId (need at least two dot-separated segments)`
     );
   }
+  const dynamicPath = findDynamicConfigFile(cwd);
+  if (dynamicPath) {
+    setDynamicConfigValue(dynamicPath, ['android', 'package'], pkg);
+    invalidateExpoConfigCache(cwd);
+    return;
+  }
   const appJsonPath = path.join(cwd, 'app.json');
   if (!fs.existsSync(appJsonPath)) {
     throw new Error(`app.json not found at ${appJsonPath}`);
@@ -624,11 +672,11 @@ export function setAndroidPackage(cwd: string, packageName: string): void {
 }
 
 export async function collectDoctorChecks(cwd: string): Promise<DoctorCheckSummary> {
-  // When the 8s safety net fires, abort the in-flight environment probes so
+  // When the 20s safety net fires, abort the in-flight environment probes so
   // they stop promptly instead of continuing in the background, and return a
   // clearly-incomplete result rather than a misleadingly-green "partial" row.
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const timeout = setTimeout(() => controller.abort(), 20_000);
   try {
     return await Promise.race([
       performDoctorChecks(cwd, controller.signal),
@@ -855,7 +903,8 @@ async function performDoctorChecks(cwd: string, signal?: AbortSignal): Promise<D
   const ctx = await collectDoctorChecksContext(cwd, signal);
 
   const canFixAndroidPackage =
-    ctx.androidPkg.source === 'app.json' &&
+    (ctx.androidPkg.source === 'app.json' ||
+      (ctx.androidPkg.source === 'dynamic' && canEditExpoConfig(cwd))) &&
     (ctx.androidPkg.pkg === null || !ANDROID_PKG_RE.test(ctx.androidPkg.pkg));
   // The browser UI uses Expo's GraphQL API directly, so its EAS actions do not
   // require the optional eas-cli executable to be installed.
@@ -955,7 +1004,10 @@ export async function runDoctor({
   const interactive = process.stdin.isTTY && !dryRun;
   let currentEasLink = easLink;
 
-  const needsPkgFix = androidPkg.source === 'app.json' && (androidPkg.pkg === null || !ANDROID_PKG_RE.test(androidPkg.pkg));
+  const needsPkgFix =
+    (androidPkg.source === 'app.json' ||
+      (androidPkg.source === 'dynamic' && canEditExpoConfig(cwd))) &&
+    (androidPkg.pkg === null || !ANDROID_PKG_RE.test(androidPkg.pkg));
   const needsEasConfigFix = !!eas && currentEasLink.kind === 'linked' && !currentEasLink.hasEasJson;
   const needsKeystoreFix = !readKeystoreProps(cwd);
 
@@ -983,7 +1035,7 @@ export async function runDoctor({
       const autoPackage = `com.example.${cleanFolder}`;
       try {
         setAndroidPackage(cwd, autoPackage);
-        log.ok(`Set android.package to "${autoPackage}" in app.json`);
+        log.ok(`Set android.package to "${autoPackage}" in ${getExpoConfigFileLabel(cwd)}`);
         const fixedPkg = androidPackageCheck(cwd);
         replaceResultByName(results, fixedPkg.result.name, fixedPkg.result);
       } catch (err: any) {

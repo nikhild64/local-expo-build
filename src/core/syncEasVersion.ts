@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { log } from '../util/log';
 import { easGraphql } from './eas/api';
+import { readExpoConfig } from './expoConfig';
 
 export interface SyncEasVersionOpts {
   cwd: string;
@@ -9,24 +10,27 @@ export interface SyncEasVersionOpts {
 
 export async function syncEasVersion({ cwd }: SyncEasVersionOpts): Promise<void> {
   const gradlePath = path.join(cwd, 'android', 'app', 'build.gradle');
-  const appJsonPath = path.join(cwd, 'app.json');
   if (!fs.existsSync(gradlePath)) throw new Error(`${gradlePath} not found`);
-  if (!fs.existsSync(appJsonPath)) throw new Error(`${appJsonPath} not found`);
+
+  const resolved = readExpoConfig(cwd);
+  if (!resolved) {
+    throw new Error(`Expo config (app.json or app.config.*) not found or unreadable in ${cwd}`);
+  }
+  const exp = resolved.config;
 
   const gradle = fs.readFileSync(gradlePath, 'utf8');
   const m = gradle.match(/\bversionCode\s+(\d+)/);
   if (!m) throw new Error('Could not find versionCode in build.gradle');
   const versionCode = m[1];
 
-  const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
-  const projectId: string | undefined = appJson.expo?.extra?.eas?.projectId;
-  const applicationId: string | undefined = appJson.expo?.android?.package;
-  const storeVersion: string = appJson.expo?.version ?? '1.0.0';
+  const projectId: string | undefined = exp?.extra?.eas?.projectId;
+  const applicationId: string | undefined = exp?.android?.package;
+  const storeVersion: string = exp?.version ?? '1.0.0';
   if (!projectId) {
-    log.warn('No expo.extra.eas.projectId in app.json — skipping EAS version sync.');
+    log.warn('No expo.extra.eas.projectId in Expo config — skipping EAS version sync.');
     return;
   }
-  if (!applicationId) throw new Error('Missing expo.android.package in app.json');
+  if (!applicationId) throw new Error('Missing expo.android.package in Expo config');
 
   const mutation = `
     mutation CreateAppVersionMutation($appVersionInput: AppVersionInput!) {

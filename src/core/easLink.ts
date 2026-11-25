@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { readExpoConfig } from './expoConfig';
+import { findDynamicConfigFile } from './expoConfigEdit';
 
 export type EasLinkResult =
   | { kind: 'linked'; projectId: string; hasEasJson: boolean; source: 'app.json' | 'dynamic' }
@@ -19,11 +20,7 @@ export type EasLinkResult =
 export function detectEasLink(cwd: string): EasLinkResult {
   const hasEasJson = fs.existsSync(path.join(cwd, 'eas.json'));
   const hasAppJson = fs.existsSync(path.join(cwd, 'app.json'));
-  const hasDynamic =
-    fs.existsSync(path.join(cwd, 'app.config.js')) ||
-    fs.existsSync(path.join(cwd, 'app.config.ts')) ||
-    fs.existsSync(path.join(cwd, 'app.config.cjs')) ||
-    fs.existsSync(path.join(cwd, 'app.config.mjs'));
+  const hasDynamic = !!findDynamicConfigFile(cwd);
 
   const resolved = readExpoConfig(cwd);
 
