@@ -483,6 +483,32 @@ describe('app.config.ts + app.json precedence & full workflows', () => {
     const gradle = fs.readFileSync(gradlePath, 'utf8');
     assert.match(gradle, /versionCode 11/);
     assert.match(gradle, /versionName "3\.1\.1"/);
+
+    // Must never invoke `eas build:version:set` with nonexistent non-interactive flags
+    const tplSrc = fs.readFileSync(path.join(scriptsDir, 'bump-version.js'), 'utf8');
+    const tplCode = tplSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    assert.ok(!/build:version:set|--version-code/.test(tplCode), 'bump-version.js must use GraphQL instead of interactive-only build:version:set');
+  });
+
+  it('scaffolded templates/scripts/bump-version.js skips EAS fetch when eas.json appVersionSource is not remote', async () => {
+    const cfgPath = path.join(dir, 'app.config.ts');
+    fs.writeFileSync(
+      cfgPath,
+      `export default {\n  name: 'LocalVer',\n  slug: 'local-ver',\n  version: '1.0.0',\n  android: { package: 'com.acme.localver' },\n  extra: { eas: { projectId: '${TEST_PROJECT_ID}' } },\n};\n`,
+      'utf8'
+    );
+    fs.writeFileSync(path.join(dir, 'eas.json'), JSON.stringify({ cli: { appVersionSource: 'local' } }), 'utf8');
+    const gradlePath = path.join(dir, 'android', 'app', 'build.gradle');
+    fs.mkdirSync(path.dirname(gradlePath), { recursive: true });
+    fs.writeFileSync(gradlePath, 'android {\n  defaultConfig {\n    versionCode 2\n    versionName "1.0.0"\n  }\n}\n', 'utf8');
+    const scriptsDir = path.join(dir, 'scripts');
+    fs.mkdirSync(scriptsDir, { recursive: true });
+    fs.copyFileSync(path.join(__dirname, '..', 'templates', 'scripts', 'resolve-project-bin.js'), path.join(scriptsDir, 'resolve-project-bin.js'));
+    fs.copyFileSync(path.join(__dirname, '..', 'templates', 'scripts', 'bump-version.js'), path.join(scriptsDir, 'bump-version.js'));
+
+    const { stdout } = await execFileAsync(process.execPath, [path.join(scriptsDir, 'bump-version.js')], { cwd: dir });
+    assert.match(stdout, /appVersionSource is not "remote"/);
+    assert.match(fs.readFileSync(gradlePath, 'utf8'), /versionCode 3/);
   });
 });
 

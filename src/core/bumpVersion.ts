@@ -72,33 +72,39 @@ export function parseEasCliVersionCode(stdout: string): number | null {
 /**
  * Reads the current versionCode straight from EAS's GraphQL API — the same
  * query eas-cli uses. Works without eas-cli installed; only needs EXPO_TOKEN
- * or an `eas login` session. Returns null when the app has no remote version
- * yet (or no auth is available); throws when the API call itself fails so the
- * caller can decide how loudly to report it.
+ * or an `eas login` session.
+ *
+ * Returns `queried: true` when EAS confirmed the app record exists (so a null
+ * `versionCode` distinguishes "no remote builds yet" from "couldn't query").
  */
 async function queryEasLatestVersionCode(
   projectId: string,
   applicationId: string
-): Promise<number | null> {
+): Promise<{ queried: boolean; versionCode: number | null }> {
   const auth = resolveEasAuth();
   if (!auth) {
     log.dim('No EXPO_TOKEN or eas login session — skipping GraphQL version fetch.');
-    return null;
+    return { queried: false, versionCode: null };
   }
   const data = await easGraphql<any>(
     LATEST_APP_VERSION_QUERY,
     { appId: projectId, platform: 'ANDROID', applicationIdentifier: applicationId },
     auth
   );
+  if (!data?.app?.byId) {
+    return { queried: false, versionCode: null };
+  }
   const buildVersion =
-    data?.app?.byId?.latestAppVersionByPlatformAndApplicationIdentifier?.buildVersion;
-  if (buildVersion === null || buildVersion === undefined) return null;
+    data.app.byId.latestAppVersionByPlatformAndApplicationIdentifier?.buildVersion;
+  if (buildVersion === null || buildVersion === undefined) {
+    return { queried: true, versionCode: null };
+  }
   const parsed = parseInt(String(buildVersion), 10);
   if (!Number.isInteger(parsed)) {
     log.dim(`EAS returned an unexpected buildVersion "${buildVersion}" — treating as no remote version.`);
-    return null;
+    return { queried: true, versionCode: null };
   }
-  return parsed;
+  return { queried: true, versionCode: parsed };
 }
 
 const CREATE_APP_VERSION_MUTATION = `
@@ -108,64 +114,46 @@ const CREATE_APP_VERSION_MUTATION = `
     }
   }`;
 
+/**
+ * Updates EAS's remote Android versionCode via the GraphQL `createAppVersion`
+ * mutation (the same mutation `eas build:version:set` executes after its
+ * interactive prompt; `eas build:version:set` itself has no non-interactive
+ * `--version-code`/`--version-name` CLI flags).
+ */
 async function pushEasRemoteVersionCode(opts: {
-  cwd: string;
-  profile: string;
   projectId: string;
   applicationId: string | undefined;
   versionName: string;
   versionCode: number;
-  cliAvailable: boolean;
 }): Promise<boolean> {
-  if (opts.cliAvailable) {
-    try {
-      const res = execaSync(
-        'eas',
-        [
-          'build:version:set',
-          '--platform',
-          'android',
-          '--profile',
-          opts.profile,
-          '--version-code',
-          String(opts.versionCode),
-          '--version-name',
-          opts.versionName,
-          '--non-interactive',
-        ],
-        { cwd: opts.cwd, encoding: 'utf8', reject: false, timeout: 30_000 }
-      );
-      if (res.exitCode === 0) return true;
-    } catch {
-      // fall through to GraphQL API
-    }
+  if (!opts.applicationId) {
+    log.dim('Missing Android applicationId — cannot update EAS remote versionCode.');
+    return false;
   }
-
-  if (opts.applicationId) {
-    const auth = resolveEasAuth();
-    if (auth) {
-      try {
-        await easGraphql(
-          CREATE_APP_VERSION_MUTATION,
-          {
-            appVersionInput: {
-              appId: opts.projectId,
-              platform: 'ANDROID',
-              applicationIdentifier: opts.applicationId,
-              storeVersion: opts.versionName,
-              buildVersion: String(opts.versionCode),
-            },
-          },
-          auth
-        );
-        return true;
-      } catch (err: any) {
-        log.dim(`EAS GraphQL version set failed: ${err?.message || err}`);
-      }
-    }
+  const auth = resolveEasAuth();
+  if (!auth) {
+    log.dim('No EXPO_TOKEN or eas login session — cannot update EAS remote versionCode.');
+    return false;
   }
-
-  return false;
+  try {
+    await easGraphql(
+      CREATE_APP_VERSION_MUTATION,
+      {
+        appVersionInput: {
+          appId: opts.projectId,
+          platform: 'ANDROID',
+          applicationIdentifier: opts.applicationId,
+          storeVersion: opts.versionName,
+          buildVersion: String(opts.versionCode),
+        },
+      },
+      auth
+    );
+    return true;
+  } catch (err: any) {
+    log.dim(`EAS GraphQL version set failed: ${err?.message || err}`);
+    return false;
+  }
 }
 
 /**
@@ -175,15 +163,14 @@ async function pushEasRemoteVersionCode(opts: {
  *  1. `eas build:version:get` — the CLI is authoritative when it succeeds;
  *     parsing is hardened against ANSI colors and separator drift.
  *  2. EAS GraphQL API (`latestAppVersionByPlatformAndApplicationIdentifier`)
- *     — kicks in when the CLI is missing/crashed or its text output changed
- *     shape. Needs no eas-cli install, only EXPO_TOKEN / `eas login`.
- *  3. Seed the remote version from the local versionCode (`build:version:set`)
- *     for a project that has never built on EAS — only when eas-cli is present
- *     and explicitly failed.
+ *     — kicks in when the CLI is missing, timed out, crashed, or its text
+ *     output changed shape. Needs no eas-cli install, only EXPO_TOKEN / `eas login`.
+ *  3. Seed the remote version from the local versionCode via GraphQL
+ *     `createAppVersion` for a project that has never built on EAS yet.
  *
  * If a remote versionCode exists and `localCode > remote`, we reconcile by
- * pushing `localCode + 1` to EAS remote and returning `localCode + 1` so local
- * `build.gradle` stays monotonic and synced with EAS.
+ * pushing `localCode + 1` to EAS remote via GraphQL and returning `localCode + 1`
+ * so local `build.gradle` stays monotonic and synced with EAS.
  *
  * Returns null when nothing could be resolved (the caller falls back to a
  * plain local versionCode bump, preserving the pre-existing behavior).
@@ -200,8 +187,8 @@ async function resolveEasRemoteVersionCode(opts: {
   const curMatch = opts.gradle.match(/\bversionCode\s+(\d+)/);
   const localCode = curMatch ? parseInt(curMatch[1], 10) : null;
 
-  // 1) eas-cli `build:version:get`. Wrapped in try/catch because a missing or
-  //    crashing eas-cli (ENOENT, timeout) must degrade to the fallbacks below
+  // 1) eas-cli `build:version:get`. Wrapped in try/catch because a missing,
+  //    timed-out, or crashing eas-cli must degrade to the GraphQL fallback
   //    instead of hard-failing the whole version bump.
   let cliExitCode: number | undefined;
   let cliStdout = '';
@@ -209,31 +196,38 @@ async function resolveEasRemoteVersionCode(opts: {
     const result = execaSync(
       'eas',
       ['build:version:get', '--platform', 'android', '--profile', opts.profile, '--non-interactive'],
-      { cwd: opts.cwd, encoding: 'utf8', reject: false, timeout: 30_000 }
+      { cwd: opts.cwd, encoding: 'utf8', reject: false, timeout: 15_000 }
     );
-    cliExitCode = result.exitCode;
-    cliStdout = result.stdout || '';
+    if ((result as any).timedOut) {
+      log.dim('eas build:version:get timed out — falling back to the EAS GraphQL API.');
+    } else {
+      cliExitCode = result.exitCode;
+      cliStdout = result.stdout || '';
+    }
   } catch (err: any) {
     log.dim(`eas build:version:get unavailable (${err?.message || err}).`);
   }
 
   let remote: number | null = null;
   let viaGraphql = false;
+  let graphqlConfirmedEmpty = false;
 
   if (cliExitCode === 0) {
     remote = parseEasCliVersionCode(cliStdout);
-    if (remote === null) {
+    if (remote === null && !/no remote versions/i.test(cliStdout)) {
       log.dim('`eas build:version:get` output changed shape — querying the EAS GraphQL API directly.');
     }
   }
 
-  // 2) GraphQL API fallback — also covers the eas-cli-missing case.
+  // 2) GraphQL API fallback — also covers the eas-cli-missing and timeout cases.
   if (remote === null && opts.applicationId) {
     try {
-      const gqlRemote = await queryEasLatestVersionCode(opts.projectId, opts.applicationId);
-      if (gqlRemote !== null) {
-        remote = gqlRemote;
+      const gql = await queryEasLatestVersionCode(opts.projectId, opts.applicationId);
+      if (gql.versionCode !== null) {
+        remote = gql.versionCode;
         viaGraphql = true;
+      } else if (gql.queried) {
+        graphqlConfirmedEmpty = true;
       }
     } catch (err: any) {
       log.dim(`EAS GraphQL version fetch failed: ${err?.message || err}`);
@@ -247,13 +241,10 @@ async function resolveEasRemoteVersionCode(opts: {
         `Local versionCode (${localCode}) is greater than EAS remote (${remote}) — setting remote to ${code} and syncing locally.`
       );
       const pushed = await pushEasRemoteVersionCode({
-        cwd: opts.cwd,
-        profile: opts.profile,
         projectId: opts.projectId,
         applicationId: opts.applicationId,
         versionName: opts.nextVersion,
         versionCode: code,
-        cliAvailable: cliExitCode !== undefined,
       });
       if (pushed) {
         log.ok(`EAS remote versionCode set to ${code} (local ${localCode} → ${code})`);
@@ -268,40 +259,27 @@ async function resolveEasRemoteVersionCode(opts: {
     return code;
   }
 
-  // 3) First build on EAS — `build:version:get` fails with a non-zero exit.
-  //    Seed the remote version with the local versionCode first, then bump
-  //    from it. A successful (exit 0) run that found nothing means "no remote
-  //    versions configured", which is handled above — seeding there would
-  //    clobber the remote with a stale local code.
-  if (cliExitCode !== undefined && cliExitCode !== 0) {
+  // 3) First build on EAS — confirmed via GraphQL (null remote version) or CLI
+  //    non-zero exit. Seed remote with localCode via GraphQL `createAppVersion`
+  //    (never call interactive-only `eas build:version:set`).
+  if (graphqlConfirmedEmpty || (cliExitCode !== undefined && cliExitCode !== 0)) {
     if (localCode == null) {
       log.warn('Could not read local versionCode; falling back to local bump');
       return null;
     }
-    try {
-      execaSync(
-        'eas',
-        [
-          'build:version:set',
-          '--platform',
-          'android',
-          '--profile',
-          opts.profile,
-          '--version-code',
-          String(localCode),
-          '--version-name',
-          opts.currentVersion,
-          '--non-interactive',
-        ],
-        { cwd: opts.cwd, encoding: 'utf8', timeout: 30_000 }
-      );
+    const seeded = await pushEasRemoteVersionCode({
+      projectId: opts.projectId,
+      applicationId: opts.applicationId,
+      versionName: opts.currentVersion,
+      versionCode: localCode,
+    });
+    if (seeded) {
       const code = localCode + 1;
       log.ok(`Seeded EAS versionCode ${localCode} (first build) → ${code}`);
       return code;
-    } catch (err: any) {
-      log.warn('EAS version set failed. (Ensure project is linked and authenticated)');
-      return null;
     }
+    log.warn('EAS version set failed. (Ensure project is linked and authenticated via `eas login` or `EXPO_TOKEN`)');
+    return null;
   }
 
   log.warn('Could not parse EAS versionCode; falling back to local bump');
@@ -397,9 +375,11 @@ export async function bumpVersion({
   const projectId: string | undefined =
     freshConfig?.extra?.eas?.projectId ??
     (dynamicPath ? readStaticLiteralFromDynamicConfig(dynamicPath, ['extra', 'eas', 'projectId']) : undefined);
+  const gradleAppId = gradle.match(/\bapplicationId\s+['"]([^'"]+)['"]/)?.[1];
   const applicationId: string | undefined =
     freshConfig?.android?.package ??
-    (dynamicPath ? readStaticLiteralFromDynamicConfig(dynamicPath, ['android', 'package']) : undefined);
+    (dynamicPath ? readStaticLiteralFromDynamicConfig(dynamicPath, ['android', 'package']) : undefined) ??
+    gradleAppId;
   if (!skipEas && projectId) {
     const easJsonPath = path.join(cwd, 'eas.json');
     let isRemote = false;

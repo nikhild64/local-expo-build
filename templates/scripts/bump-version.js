@@ -10,14 +10,87 @@
  */
 const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const https = require('https');
+const os = require('os');
 const path = require('path');
 const { resolveProjectBin, spawnArgs } = require('./resolve-project-bin');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_JSON = path.resolve(ROOT, 'app.json');
 const PKG_JSON = path.resolve(ROOT, 'package.json');
+const EAS_JSON = path.resolve(ROOT, 'eas.json');
 const GRADLE = path.resolve(ROOT, 'android/app/build.gradle');
 const PROFILE = process.argv[2] || 'production';
+
+function resolveEasAuth() {
+  if (process.env.EXPO_TOKEN) return { token: process.env.EXPO_TOKEN };
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.expo', 'state.json'), 'utf8'));
+    if (s?.auth?.sessionSecret) return { sessionSecret: s.auth.sessionSecret };
+  } catch {}
+  return null;
+}
+
+function easGraphql(query, variables, auth) {
+  const body = JSON.stringify({ query, variables });
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body),
+    'expo-client-info': JSON.stringify({ appVersion: '0.0.0', sdkVersion: '0.0.0' }),
+  };
+  if (auth.token) headers.authorization = `Bearer ${auth.token}`;
+  else headers['expo-session'] = auth.sessionSecret;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, val) => {
+      if (!settled) {
+        settled = true;
+        fn(val);
+      }
+    };
+    const req = https.request({ hostname: 'api.expo.dev', path: '/graphql', method: 'POST', headers }, (res) => {
+      let d = '';
+      res.on('data', (c) => (d += c));
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(d);
+          if (j.errors?.length || !res.statusCode || res.statusCode >= 400) {
+            return done(reject, new Error(j.errors?.[0]?.message || `EAS API HTTP ${res.statusCode}`));
+          }
+          done(resolve, j.data);
+        } catch (err) {
+          done(reject, err);
+        }
+      });
+    });
+    req.setTimeout(20000, () => {
+      req.destroy();
+      done(reject, new Error('EAS API request timed out'));
+    });
+    req.on('error', (err) => done(reject, err));
+    req.write(body);
+    req.end();
+  });
+}
+
+async function createEasAppVersion(projectId, applicationId, storeVersion, versionCode, auth) {
+  await easGraphql(
+    `mutation CreateAppVersionMutation($i: AppVersionInput!) {
+      appVersion { createAppVersion(appVersionInput: $i) { id } }
+    }`,
+    {
+      i: {
+        appId: projectId,
+        platform: 'ANDROID',
+        applicationIdentifier: applicationId,
+        storeVersion,
+        buildVersion: String(versionCode),
+      },
+    },
+    auth
+  );
+}
 
 const dynConfigPath = ['app.config.ts', 'app.config.js', 'app.config.cjs', 'app.config.mjs']
   .map((f) => path.join(ROOT, f))
@@ -56,6 +129,7 @@ const pkg = fs.existsSync(PKG_JSON) ? JSON.parse(fs.readFileSync(PKG_JSON, 'utf8
 const dynSrc = dynConfigPath ? fs.readFileSync(dynConfigPath, 'utf8') : '';
 const dynVerMatch = dynSrc.match(/\bversion\s*:\s*(['"])(\d+\.\d+\.\d+)\1/);
 const dynProjectIdMatch = dynSrc.match(/\bprojectId\s*:\s*(['"])([^'"]+)\1/);
+const dynPkgMatch = dynSrc.match(/\bpackage\s*:\s*(['"])([^'"]+)\1/);
 const current = resolvedExpo?.version || (dynVerMatch ? dynVerMatch[2] : undefined) || appJson?.expo?.version || pkg?.version;
 const parts = String(current || '').split('.');
 if (parts.length !== 3) {
@@ -96,71 +170,150 @@ let nextCode = null;
 const gradleTextForCode = fs.existsSync(GRADLE) ? fs.readFileSync(GRADLE, 'utf8') : '';
 const localCodeMatch = gradleTextForCode.match(/\bversionCode\s+(\d+)/);
 const localCode = localCodeMatch ? parseInt(localCodeMatch[1], 10) : null;
+const gradleAppIdMatch = gradleTextForCode.match(/\bapplicationId\s+['"]([^'"]+)['"]/);
 const projectId = resolvedExpo?.extra?.eas?.projectId || (dynProjectIdMatch ? dynProjectIdMatch[2] : undefined) || appJson?.expo?.extra?.eas?.projectId;
-if (projectId) {
-  try {
-    const out = execSync(
-      `eas build:version:get --platform android --profile ${PROFILE} --non-interactive`,
-      { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 30000 }
-    );
-    // Strip ANSI colors (eas-cli bolds the value when colors are forced) and
-    // accept the separator shapes eas-cli has used over time.
-    const clean = out.replace(/\x1b\[[0-9;]*m/g, '');
-    const m =
-      clean.match(/Android\s+versionCode\s*[-–:]\s*(\d+)/i) ||
-      clean.match(/versionCode\s*[-–:]\s*(\d+)/i);
-    if (m) {
-      const remote = parseInt(m[1], 10);
-      if (localCode !== null && localCode > remote) {
-        nextCode = localCode + 1;
-        console.warn(`Local versionCode (${localCode}) > EAS remote (${remote}) — setting remote to ${nextCode} and syncing locally.`);
-        try {
-          execSync(
-            `eas build:version:set --platform android --profile ${PROFILE} --version-code ${nextCode} --version-name ${next} --non-interactive`,
-            { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 30000 }
-          );
-          console.log(`EAS remote versionCode set to ${nextCode}`);
-        } catch {
-          console.warn(`Could not update EAS remote versionCode to ${nextCode}; syncing local to ${nextCode}.`);
+const applicationId = resolvedExpo?.android?.package || (dynPkgMatch ? dynPkgMatch[2] : undefined) || appJson?.expo?.android?.package || (gradleAppIdMatch ? gradleAppIdMatch[1] : undefined);
+
+async function resolveEasCode() {
+  if (!projectId) return;
+
+  let isRemote = true;
+  if (fs.existsSync(EAS_JSON)) {
+    try {
+      const easJson = JSON.parse(fs.readFileSync(EAS_JSON, 'utf8'));
+      isRemote = easJson?.cli?.appVersionSource === 'remote';
+    } catch {}
+  }
+  if (!isRemote) {
+    console.log('EAS appVersionSource is not "remote" (default is local). Skipping remote fetch.');
+    return;
+  }
+
+  const auth = resolveEasAuth();
+  let remote = null;
+  let graphqlConfirmedEmpty = false;
+  let cliConfirmedEmpty = false;
+  let viaGraphql = false;
+
+  // 1) Query EAS GraphQL API first when authenticated (~0.7s vs 30-50s+ for `eas` CLI).
+  if (auth && applicationId) {
+    try {
+      const data = await easGraphql(
+        `query LatestAppVersion($appId: String!, $platform: AppPlatform!, $applicationIdentifier: String!) {
+          app { byId(appId: $appId) {
+            id
+            latestAppVersionByPlatformAndApplicationIdentifier(
+              platform: $platform
+              applicationIdentifier: $applicationIdentifier
+            ) { buildVersion }
+          } }
+        }`,
+        { appId: projectId, platform: 'ANDROID', applicationIdentifier: applicationId },
+        auth
+      );
+      if (data?.app?.byId) {
+        const bv = data.app.byId.latestAppVersionByPlatformAndApplicationIdentifier?.buildVersion;
+        if (bv === null || bv === undefined) {
+          graphqlConfirmedEmpty = true;
+        } else {
+          const parsed = parseInt(String(bv), 10);
+          if (Number.isInteger(parsed)) {
+            remote = parsed;
+            viaGraphql = true;
+          } else {
+            graphqlConfirmedEmpty = true;
+          }
         }
-      } else {
-        nextCode = remote + 1;
-        console.log(`EAS versionCode: ${remote} → ${nextCode}`);
       }
-    } else {
-      console.warn('Could not parse EAS versionCode; falling back to local bump');
-    }
-  } catch (e) {
-    // Never built on EAS yet — `build:version:get` fails. Seed the remote
-    // version with the local versionCode first, then bump from it.
-    if (localCode == null) {
-      console.warn('Could not read local versionCode; falling back to local bump');
-    } else {
-      try {
-        execSync(
-          `eas build:version:set --platform android --profile ${PROFILE} --version-code ${localCode} --version-name ${current} --non-interactive`,
-          { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 30000 }
-        );
-        nextCode = localCode + 1;
-        console.log(`Seeded EAS versionCode ${localCode} (first build) → ${nextCode}`);
-      } catch (setErr) {
-        console.warn('EAS version set failed. (Ensure project is linked and authenticated)');
-      }
+    } catch (err) {
+      console.warn(`EAS GraphQL version fetch failed (${err?.message || err}); trying eas CLI...`);
     }
   }
+
+  // 2) Fallback to `eas build:version:get` if GraphQL wasn't available or didn't resolve.
+  if (remote === null && !graphqlConfirmedEmpty) {
+    try {
+      const out = execSync(
+        `eas build:version:get --platform android --profile ${PROFILE} --non-interactive`,
+        { cwd: ROOT, encoding: 'utf8', timeout: 60000 }
+      );
+      const clean = out.replace(/\x1b\[[0-9;]*m/g, '');
+      const m =
+        clean.match(/Android\s+versionCode\s*[-–:]\s*(\d+)/i) ||
+        clean.match(/versionCode\s*[-–:]\s*(\d+)/i);
+      if (m) {
+        remote = parseInt(m[1], 10);
+      } else if (/no remote versions/i.test(clean)) {
+        cliConfirmedEmpty = true;
+      }
+    } catch (err) {
+      console.warn(`eas build:version:get failed (${err?.message || err}).`);
+    }
+  }
+
+  if (remote !== null) {
+    if (localCode !== null && localCode > remote) {
+      nextCode = localCode + 1;
+      console.warn(`Local versionCode (${localCode}) > EAS remote (${remote}) — setting remote to ${nextCode} and syncing locally.`);
+      if (auth && applicationId) {
+        try {
+          await createEasAppVersion(projectId, applicationId, next, nextCode, auth);
+          console.log(`EAS remote versionCode set to ${nextCode}`);
+        } catch (err) {
+          console.warn(`Could not update EAS remote versionCode to ${nextCode} (${err?.message || err}); syncing local to ${nextCode}.`);
+        }
+      } else {
+        console.warn(`No EXPO_TOKEN / eas login session (or applicationId) to update EAS remote; syncing local to ${nextCode}.`);
+      }
+      return;
+    }
+    nextCode = remote + 1;
+    console.log(`EAS versionCode${viaGraphql ? ' (via GraphQL)' : ''}: ${remote} → ${nextCode}`);
+    return;
+  }
+
+  // 3) First build on EAS — initialize via GraphQL `createAppVersion` (`eas build:version:set`
+  //    is interactive-only and has no `--version-code`/`--non-interactive` flags).
+  if (graphqlConfirmedEmpty || cliConfirmedEmpty) {
+    if (localCode == null) {
+      console.warn('Could not read local versionCode; falling back to local bump');
+      return;
+    }
+    if (!auth || !applicationId) {
+      console.warn('EAS remote has no versions yet, and EXPO_TOKEN / `eas login` session or applicationId was not found; falling back to local bump.');
+      return;
+    }
+    try {
+      await createEasAppVersion(projectId, applicationId, current, localCode, auth);
+      nextCode = localCode + 1;
+      console.log(`Seeded EAS versionCode ${localCode} (first build) → ${nextCode}`);
+    } catch (err) {
+      console.warn(`EAS version set failed (${err?.message || err}). (Ensure project is linked and authenticated)`);
+    }
+    return;
+  }
+
+  console.warn('Could not fetch EAS versionCode; falling back to local bump');
 }
 
-if (!fs.existsSync(GRADLE)) {
-  console.error('android/app/build.gradle missing — run prebuild first.');
+(async () => {
+  await resolveEasCode();
+
+  if (!fs.existsSync(GRADLE)) {
+    console.error('android/app/build.gradle missing — run prebuild first.');
+    process.exit(1);
+  }
+  let gradle = fs.readFileSync(GRADLE, 'utf8');
+  if (nextCode == null) {
+    const m = gradle.match(/\bversionCode\s+(\d+)/);
+    nextCode = m ? parseInt(m[1], 10) + 1 : 1;
+    console.log(`Local versionCode bump → ${nextCode}`);
+  }
+  gradle = gradle.replace(/(\bversionCode\s+)\d+/, `$1${nextCode}`);
+  gradle = gradle.replace(/(\bversionName\s+")[^"]*"/, `$1${next}"`);
+  fs.writeFileSync(GRADLE, gradle);
+  console.log(`build.gradle: versionCode=${nextCode}, versionName="${next}"`);
+})().catch((err) => {
+  console.error(err?.message || err);
   process.exit(1);
-}
-let gradle = fs.readFileSync(GRADLE, 'utf8');
-if (nextCode == null) {
-  const m = gradle.match(/\bversionCode\s+(\d+)/);
-  nextCode = m ? parseInt(m[1], 10) + 1 : 1;
-  console.log(`Local versionCode bump → ${nextCode}`);
-}
-gradle = gradle.replace(/(\bversionCode\s+)\d+/, `$1${nextCode}`);
-gradle = gradle.replace(/(\bversionName\s+")[^"]*"/, `$1${next}"`);
-fs.writeFileSync(GRADLE, gradle);
-console.log(`build.gradle: versionCode=${nextCode}, versionName="${next}"`);
+});
